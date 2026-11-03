@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=../contracts/tenant_manifest_v1.schema.json
+#
+# OutSight HuntCompiler — tenant manifest (the ONLY input about a tenant).
+# Public facts only. Internal IPs, hostnames and agent groups are rejected by the loader;
+# they live in the tenant SOAR, which resolves `target_scope` / `${HC_*}` placeholders.
+# Secrets are referenced by environment-variable name, never written here.
+
+manifest_version: "1.0"
+
+tenant:
+  slug: tencongty
+  display_name: "Tên Công Ty JSC"
+
+brand:
+  domains: [tencongty.vn, tencongty.com.vn]
+  # Seeds for lookalike detection on CertStream / URLScan (>= 4 chars, lowercase).
+  keywords: [tencongty, tcty-sso]
+  email_domains: [tencongty.vn]
+
+login_portals:
+  - url: https://sso.tencongty.vn
+    kind: sso
+    product: microsoft:entra_id
+  - url: https://vpn.tencongty.vn
+    kind: vpn
+    product: fortinet:fortigate
+  - url: https://mail.tencongty.vn/owa
+    kind: webmail
+    product: microsoft:exchange_server
+
+# Own public ranges: excluded from every blocklist and used for exposure checks.
+public_ip_ranges:
+  - 203.0.113.0/28  # RFC 5737 documentation range — replace with real egress/VPN ranges
+
+# vendor:product, CPE 2.3 naming, so they join directly against CISA KEV / NVD / Nuclei.
+tech_stack_tags:
+  - fortinet:fortigate
+  - fortinet:fortios
+  - microsoft:exchange_server
+  - microsoft:entra_id
+  - microsoft:windows_server
+  - microsoft:iis
+  - vmware:vcenter_server
+  - nginx:nginx
+
+# Names as used by the LOLRMM project; excluded from rogue-RMM hunts (Vector 4).
+approved_rmm_tools: [anydesk]
+
+delivery:
+  # pull (recommended): the SOAR polls GET /api/v1/packs over an outbound connection,
+  #                     so nothing inside the LAN is exposed to the Internet.
+  # push:               HuntCompiler POSTs to webhook_url — requires an Internet-reachable n8n.
+  mode: pull
+  # webhook_url: https://soar.tencongty.vn/webhook/huntcompiler
+  secret_env: HC_TENANT_TENCONGTY_HMAC_SECRET      # HMAC-SHA256 key (>= 32 chars)
+  api_token_env: HC_TENANT_TENCONGTY_API_TOKEN     # bearer token for pull + feedback
+  timeout_seconds: 10
+  max_attempts: 8
+
+hunting:
+  enabled_vectors:
+    - identity_aitm_infostealer
+    - edge_device_exploit
+    - clickfix_fileless
+    - lots_rmm_tunnel
+    - byovd_dll_sideload
+    - supply_chain_seo
+  default_lookback_days: 14
+  min_confidence_to_deliver: 60
+  allow_auto_block_hint: false

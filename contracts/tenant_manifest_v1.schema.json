@@ -1,0 +1,287 @@
+{
+  "$defs": {
+    "AttackVector": {
+      "enum": [
+        "identity_aitm_infostealer",
+        "edge_device_exploit",
+        "clickfix_fileless",
+        "lots_rmm_tunnel",
+        "byovd_dll_sideload",
+        "supply_chain_seo"
+      ],
+      "title": "AttackVector",
+      "type": "string"
+    },
+    "BrandProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Domains",
+          "type": "array"
+        },
+        "keywords": {
+          "description": "Lookalike seeds for CertStream/URLScan; >=4 chars to keep noise manageable.",
+          "items": {
+            "maxLength": 63,
+            "minLength": 4,
+            "pattern": "^[a-z0-9-]+$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Keywords",
+          "type": "array"
+        },
+        "email_domains": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Email Domains",
+          "type": "array"
+        }
+      },
+      "required": [
+        "domains"
+      ],
+      "title": "BrandProfile",
+      "type": "object"
+    },
+    "DeliveryConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/DeliveryMode",
+          "default": "pull"
+        },
+        "webhook_url": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "maxLength": 2083,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Webhook Url"
+        },
+        "secret_env": {
+          "description": "Env var holding the HMAC secret (>=32 chars)",
+          "pattern": "^HC_TENANT_[A-Z0-9_]{3,100}$",
+          "title": "Secret Env",
+          "type": "string"
+        },
+        "api_token_env": {
+          "anyOf": [
+            {
+              "pattern": "^HC_TENANT_[A-Z0-9_]{3,100}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Env var holding the bearer token for pull mode",
+          "title": "Api Token Env"
+        },
+        "timeout_seconds": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "maximum": 60,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "max_attempts": {
+          "default": 8,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "secret_env"
+      ],
+      "title": "DeliveryConfig",
+      "type": "object"
+    },
+    "DeliveryMode": {
+      "enum": [
+        "push",
+        "pull"
+      ],
+      "title": "DeliveryMode",
+      "type": "string"
+    },
+    "HuntingPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled_vectors": {
+          "items": {
+            "$ref": "#/$defs/AttackVector"
+          },
+          "title": "Enabled Vectors",
+          "type": "array"
+        },
+        "default_lookback_days": {
+          "default": 14,
+          "maximum": 90,
+          "minimum": 1,
+          "title": "Default Lookback Days",
+          "type": "integer"
+        },
+        "min_confidence_to_deliver": {
+          "default": 60,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Min Confidence To Deliver",
+          "type": "integer"
+        },
+        "allow_auto_block_hint": {
+          "default": false,
+          "description": "If false, packs for this tenant never set auto_block_pre_iocs=true",
+          "title": "Allow Auto Block Hint",
+          "type": "boolean"
+        }
+      },
+      "title": "HuntingPolicy",
+      "type": "object"
+    },
+    "LoginPortal": {
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "sso",
+            "vpn",
+            "webmail",
+            "vdi",
+            "rdweb",
+            "citrix",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "product": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product"
+        }
+      },
+      "required": [
+        "url",
+        "kind"
+      ],
+      "title": "LoginPortal",
+      "type": "object"
+    },
+    "TenantIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "slug": {
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+          "title": "Slug",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug",
+        "display_name"
+      ],
+      "title": "TenantIdentity",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "manifest_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Manifest Version",
+      "type": "string"
+    },
+    "tenant": {
+      "$ref": "#/$defs/TenantIdentity"
+    },
+    "brand": {
+      "$ref": "#/$defs/BrandProfile"
+    },
+    "login_portals": {
+      "items": {
+        "$ref": "#/$defs/LoginPortal"
+      },
+      "maxItems": 100,
+      "title": "Login Portals",
+      "type": "array"
+    },
+    "public_ip_ranges": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 500,
+      "title": "Public Ip Ranges",
+      "type": "array"
+    },
+    "tech_stack_tags": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 500,
+      "title": "Tech Stack Tags",
+      "type": "array"
+    },
+    "approved_rmm_tools": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 100,
+      "title": "Approved Rmm Tools",
+      "type": "array"
+    },
+    "delivery": {
+      "$ref": "#/$defs/DeliveryConfig"
+    },
+    "hunting": {
+      "$ref": "#/$defs/HuntingPolicy"
+    }
+  },
+  "required": [
+    "tenant",
+    "brand",
+    "delivery"
+  ],
+  "title": "TenantManifest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://outsight.local/contracts/tenant_manifest_v1.schema.json"
+}

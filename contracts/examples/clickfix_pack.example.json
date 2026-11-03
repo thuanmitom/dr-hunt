@@ -1,0 +1,93 @@
+{
+  "schema_version": "2.0",
+  "pack_id": "3f1c2b7e-9a64-4c1d-8e2f-5b7a0d4c6e91",
+  "timestamp": "2026-10-30T07:00:00Z",
+  "attack_vector": "clickfix_fileless",
+  "severity": "high",
+  "confidence_score": 72,
+  "mitre_attack": [
+    "T1059.001",
+    "T1204.004",
+    "T1218.005"
+  ],
+  "threat_summary": "Fake CAPTCHA pages copy a PowerShell download cradle to the clipboard and instruct the victim to paste it into Win+R. Recursive unpacking of the stager resolved two second-stage C2 domains not yet flagged by AV vendors.",
+  "prevention_blocklist": {
+    "ttl_days": 14,
+    "domains": [
+      "cdn-captcha-assets.example",
+      "verify-human-check.example"
+    ],
+    "ips": [],
+    "hashes": [],
+    "jarm_fingerprints": []
+  },
+  "internal_hunting_tasks": [
+    {
+      "task_id": "v3-runmru-paste",
+      "description": "RunMRU values containing a LOLBin plus a download/decode token (Sysmon 13).",
+      "lookback_days": 30,
+      "sigma_yaml": "title: ClickFix - Suspicious Command Pasted Into Run Dialog (RunMRU)\nid: 6c9a3f0e-2d41-4b8e-9a51-0f3d6f2b7c11\nstatus: experimental\ndescription: Detects RunMRU values written when a user pastes a download-and-execute command into Win+R.\nauthor: OutSight HuntCompiler\ndate: 2026-10-30\nlogsource:\n  product: windows\n  category: registry_set\ndetection:\n  selection_key:\n    TargetObject|contains: '\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RunMRU'\n  selection_lolbin:\n    Details|contains:\n      - 'mshta'\n      - 'powershell'\n      - 'pwsh'\n      - 'cmd /c'\n      - 'curl'\n  selection_payload:\n    Details|contains:\n      - 'http'\n      - ' -enc'\n      - ' -e '\n      - 'iwr'\n      - 'irm'\n      - 'iex'\n      - 'frombase64string'\n  condition: selection_key and selection_lolbin and selection_payload\nfalsepositives:\n  - Administrators pasting legitimate one-liners into Win+R\nlevel: high\ntags:\n  - attack.execution\n  - attack.t1204.004\n  - attack.t1059.001",
+      "compiled_queries": {
+        "wazuh_es_dsl": {
+          "query": {
+            "bool": {
+              "must": [
+                {
+                  "query_string": {
+                    "query": "data.win.system.eventID:13 AND (data.win.eventdata.targetObject:*\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\RunMRU* AND (data.win.eventdata.details:(*mshta* OR *powershell* OR *pwsh* OR *cmd\\ \\/c* OR *curl*)) AND (data.win.eventdata.details:(*http* OR *\\ \\-enc* OR *\\ \\-e\\ * OR *iwr* OR *irm* OR *iex* OR *frombase64string*)))",
+                    "analyze_wildcard": true
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "kql_defender": "DeviceRegistryEvents\n| where RegistryKey contains \"\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\RunMRU\" and (RegistryValueData contains \"mshta\" or RegistryValueData contains \"powershell\" or RegistryValueData contains \"pwsh\" or RegistryValueData contains \"cmd /c\" or RegistryValueData contains \"curl\") and (RegistryValueData contains \"http\" or RegistryValueData contains \" -enc\" or RegistryValueData contains \" -e \" or RegistryValueData contains \"iwr\" or RegistryValueData contains \"irm\" or RegistryValueData contains \"iex\" or RegistryValueData contains \"frombase64string\")"
+      },
+      "target_scope": "all_endpoints",
+      "required_telemetry": [
+        "defender_xdr:deviceregistryevents",
+        "sysmon:13"
+      ],
+      "scope_placeholders": []
+    },
+    {
+      "task_id": "v3-explorer-script-host",
+      "description": "explorer.exe spawning a script host with a download cradle (Sysmon 1).",
+      "lookback_days": 30,
+      "sigma_yaml": "title: ClickFix - Script Host Spawned Directly by Explorer With Download Cradle\nid: 0b6f5f0a-8f0e-4d3e-b7a4-2c4b1d9e5a37\nstatus: experimental\ndescription: Explorer launching a script host with a download/decode cradle is the execution step of a Win+R ClickFix lure.\nauthor: OutSight HuntCompiler\ndate: 2026-10-30\nlogsource:\n  product: windows\n  category: process_creation\ndetection:\n  selection_parent:\n    ParentImage|endswith: '\\explorer.exe'\n  selection_child:\n    Image|endswith:\n      - '\\mshta.exe'\n      - '\\powershell.exe'\n      - '\\pwsh.exe'\n      - '\\cscript.exe'\n      - '\\wscript.exe'\n  selection_cli:\n    CommandLine|contains:\n      - 'http'\n      - ' -enc'\n      - 'iwr'\n      - 'irm'\n      - 'iex'\n      - 'frombase64string'\n  condition: all of selection_*\nfalsepositives:\n  - Admin one-liners launched from the Run dialog\nlevel: high\ntags:\n  - attack.execution\n  - attack.t1204.004\n  - attack.t1218.005",
+      "compiled_queries": {
+        "wazuh_es_dsl": {
+          "query": {
+            "bool": {
+              "must": [
+                {
+                  "query_string": {
+                    "query": "data.win.system.eventID:1 AND (data.win.eventdata.parentImage:*\\\\explorer.exe AND (data.win.eventdata.image:(*\\\\mshta.exe OR *\\\\powershell.exe OR *\\\\pwsh.exe OR *\\\\cscript.exe OR *\\\\wscript.exe)) AND (data.win.eventdata.commandLine:(*http* OR *\\ \\-enc* OR *iwr* OR *irm* OR *iex* OR *frombase64string*)))",
+                    "analyze_wildcard": true
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "kql_defender": "DeviceProcessEvents\n| where InitiatingProcessFolderPath endswith \"\\\\explorer.exe\" and (FolderPath endswith \"\\\\mshta.exe\" or FolderPath endswith \"\\\\powershell.exe\" or FolderPath endswith \"\\\\pwsh.exe\" or FolderPath endswith \"\\\\cscript.exe\" or FolderPath endswith \"\\\\wscript.exe\") and (ProcessCommandLine contains \"http\" or ProcessCommandLine contains \" -enc\" or ProcessCommandLine contains \"iwr\" or ProcessCommandLine contains \"irm\" or ProcessCommandLine contains \"iex\" or ProcessCommandLine contains \"frombase64string\")"
+      },
+      "target_scope": "all_endpoints",
+      "required_telemetry": [
+        "defender_xdr:deviceprocessevents",
+        "sysmon:1"
+      ],
+      "scope_placeholders": []
+    }
+  ],
+  "soar_playbook_hints": {
+    "auto_block_pre_iocs": false,
+    "notify_only_on_sighting": true,
+    "suggested_remediation": [
+      "Block the listed domains on DNS/proxy for the TTL window.",
+      "On a sighting: isolate the host, collect the PowerShell/mshta command line and reset the user's sessions."
+    ]
+  },
+  "expires_at": "2026-11-13T07:00:00Z"
+}

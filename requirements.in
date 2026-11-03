@@ -1,0 +1,33 @@
+# Top-level runtime dependencies. Edit this file, then regenerate the hash-pinned lock:
+#   uv pip compile --generate-hashes --python-version 3.12 --python-platform x86_64-manylinux_2_28 -o requirements.txt requirements.in
+# --- API / workers / storage ---
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+pydantic==2.14.2
+pydantic-settings==2.16.2
+sqlalchemy[asyncio]==2.1.6
+asyncpg==0.32.0
+alembic==1.20.1
+celery[redis]==5.6.3
+redis==6.4.0
+cryptography==50.0.2
+pyyaml==6.0.3
+idna==3.20
+orjson==3.13.0
+tenacity==9.1.4
+# --- Collectors & pivoting (Phase 2) ---
+httpx==0.28.1
+certstream==1.12
+telethon==1.45.0
+pyjarm==0.0.5
+mmh3==5.3.1
+pymispwarninglists==1.7.0
+tldextract==5.4.0
+feedparser==6.0.14
+# --- AI compiler & Sigma translation (Phase 3) ---
+google-genai==2.34.0
+pysigma==1.5.1
+pysigma-backend-elasticsearch==2.1.1
+pysigma-backend-kusto==1.0.1
+pysigma-pipeline-sysmon==2.0.0
+pysigma-pipeline-windows==2.0.1

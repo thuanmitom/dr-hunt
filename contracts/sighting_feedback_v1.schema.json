@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "pack_id": {
+      "format": "uuid",
+      "title": "Pack Id",
+      "type": "string"
+    },
+    "sighting": {
+      "description": "True if any hunting task returned at least one hit",
+      "title": "Sighting",
+      "type": "boolean"
+    },
+    "evaluable": {
+      "default": true,
+      "description": "False if the tenant lacked the telemetry a task required; sighting=false is then not 'clean'.",
+      "title": "Evaluable",
+      "type": "boolean"
+    },
+    "evaluated_at": {
+      "format": "date-time",
+      "title": "Evaluated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "pack_id",
+    "sighting"
+  ],
+  "title": "SightingFeedback",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://outsight.local/contracts/sighting_feedback_v1.schema.json"
+}
