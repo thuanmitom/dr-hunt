@@ -3,12 +3,20 @@
 Internet-side **API service** that turns external threat intelligence into signed **Hunting Pack v2.0** JSON. Any
 SIEM/SOAR consumes the packs (Integration Kit). People use a Telegram digest and command bot.
 
-- Version 0.4.0. Phases 1, 2, 2b, 3 and **T** (Telegram, see `TELEGRAM.md`) are built. Phase T is *Built*, not
-  *Verified*, until the owner's manual checklist in `TELEGRAM.md` §9 passes.
-- **Phase 4 (n8n/Wazuh SOAR) is cancelled.**
-- Next: **Phase I** (Integration Kit), which waits for IQ1–IQ3.
+- Version 0.4.0. Phases 1, 2, 2b, 3, **T** (Telegram, see `TELEGRAM.md`), **I** (Integration Kit, see
+  `integration_kit/README.md`), **H** (hardening, D-54 to D-62; also Verified on 2026-11-15),
+  the approved items of **Q** and **R** (self-hosting, see `docs/plans/KE_HOACH_PHASE_R.md`) are built. Neither T nor I
+  is *Verified* yet: T waits for the rest of the owner's manual
+  checklist in `TELEGRAM.md` §9; in I, Wazuh is tested on the official Wazuh indexer 4.14.7
+  (`integration_kit/wazuh/SAMPLE_RUN.md`), Elastic and Splunk each wait for one live run.
+- **Deployment (D-67):** self-hosted on the user's or a small business's own machine; one tenant per installation is
+  the normal case. LAN HTTPS uses Caddy's internal CA (`HC_TLS_MODE=internal`, D-72); install guide:
+  `docs/INSTALL.md`. AI provider: paid Gemini, still off by default (D-68).
+- **Phase 4 (n8n/Wazuh SOAR) is cancelled.** Zabbix and Microsoft Defender XDR are out of the kit's scope (owner,
+  2026-11-05).
 - Read `SPEC.md`, `DECISIONS.md`, `ARCHITECTURE.md` and `TELEGRAM.md` before non-trivial work.
 - The owner writes in Vietnamese. Code, comments and docs are in English. `README.vi.md` is the Vietnamese overview.
+  Plans for the owner's approval live in `docs/plans/` and are written in Vietnamese.
 
 ## 0. When something is unclear: ask, never guess
 
@@ -21,7 +29,7 @@ Do not "temporarily" change these defaults:
 - Windows-only hunts;
 - schema `2.0`;
 - auto-block off;
-- Telegram digest-only;
+- Telegram digest-only for intelligence (ops alerts are opt-in and carry no intelligence, D-65);
 - no extra query languages in packs.
 
 ## 1. Mandatory constraints (never break)
@@ -41,7 +49,7 @@ Do not "temporarily" change these defaults:
    - Contract changes are additive and optional only.
    - After any change in `app/schemas/`, regenerate `contracts/`.
    - Contract guardrails may be tightened, never loosened.
-8. **Queries must be testable.** The Wazuh DSL is emitted only by `compiler/wazuh_dsl.py` and must be evaluable by `compiler/harness.py`. KQL must pass `translate.lint_kql`. Every query is ≤ 64 KB.
+8. **Queries must be testable.** The Wazuh DSL is emitted only by `compiler/wazuh_dsl.py` and must be evaluable by `compiler/harness.py`. Packs carry no KQL (D-63); `kql_defender` stays in the schema only for older packs, with its guardrails. Every query is ≤ 64 KB.
 9. **Determinism.** No randomness in pack content. Lists are sorted. Re-issue a pack only when its substance changes.
 10. **Telegram bot (Phase T).**
     - Bot API identity (`HC_TGBOT_*`), never the Telethon CTI account (`HC_TELEGRAM_*`).
@@ -49,7 +57,7 @@ Do not "temporarily" change these defaults:
     - Commands read the DB only — no network requests to user input.
     - IOCs defanged, accounts masked, all dynamic text HTML-escaped, AI text labelled `[AI]`.
     - The token is scrubbed from every error and log.
-11. **No SOAR features.** HuntCompiler never runs hunts or response actions. Integrations are docs and examples, not vendor code.
+11. **No SOAR features.** HuntCompiler never runs hunts or response actions. Integrations are docs and examples, not vendor code. The reference consumer in `integration_kit/` runs on the integrator's side: it never imports `app`, never ships in the image, and HuntCompiler never runs it.
 12. **Secrets.** They live only in the environment, referenced by name. Tenant secrets are Fernet-encrypted in the DB; tokens are stored as SHA-256. Never log secrets, tokens, the Telegram session or raw leak text.
 13. **Active probes go through `app/core/netguard.py`** (D-46): resolve first, public addresses only, ports 443/80, connect to the validated IP, re-validate every redirect. Never open a connection to an attacker-supplied host any other way.
 
@@ -67,6 +75,7 @@ Do not "temporarily" change these defaults:
 - **Templates** are built with `_rule()` / `_task()` and wrapped in `safe()`, so one broken template cannot stop pack building.
 - **Lint and format:** `ruff` (line length 120; `# fmt: skip` only for data tables). The test files and three data-heavy modules have per-file E501 ignores in `ruff.toml`.
 - **Examples** use `.example` / `example.com` domains and RFC 5737 IPs. Never use real victim or tenant data in fixtures.
+- **Lure and malware-like fixtures are assembled at runtime** (string pieces joined in the test, see `tests/test_phase2_detectors.py`). Windows Defender and other AV products quarantine source files that contain a literal ClickFix lure.
 
 ## 3. Commands
 
@@ -100,8 +109,17 @@ curl -s http://127.0.0.1:8000/readyz
 # Telegram bot (Phase T): not started by a plain `up` (compose profile); setup in TELEGRAM.md §8
 docker compose up -d telegram-bot
 
+# Phase H profiles: HTTPS (needs HC_PUBLIC_HOSTNAME), daily backups, self-hosted CertStream
+docker compose --profile edge up -d caddy
+docker compose --profile backup up -d backup
+docker compose --profile certstream up -d certstream-server
+
 # one-time Telegram research-account session
 python -m scripts.telegram_login
+
+# Integration Kit (integrator side, own dependencies; see integration_kit/README.md)
+uv pip compile --generate-hashes --python-version 3.12 --python-platform x86_64-manylinux_2_28 -o integration_kit/requirements.txt integration_kit/requirements.in
+python -m integration_kit.reference_consumer convert pack.json --platform splunk
 ```
 
 ## 4. Definition of done
@@ -129,7 +147,6 @@ python -m scripts.telegram_login
   - an entry in the external-dependencies table in `ARCHITECTURE.md`.
 - [ ] **New hunting template:**
   - compiles to DSL and is harness-testable;
-  - KQL passes lint (or is `None`);
   - ≤ 64 KB;
   - declares `required_telemetry` and placeholders.
 - [ ] **New AI input or output:** the risk register is updated, and a fake-provider test covers the new path.
@@ -141,11 +158,28 @@ python -m scripts.telegram_login
 
 ## 5. Known gaps (do not paper over; fix or ask)
 
-- **Never run against the live service:** URLScan, GitHub search, CISA/FIRST, Shodan, Gemini, Telegram (Telethon and the Bot API), HIBP, MalwareBazaar, the OSV per-advisory fetch (index format and file sizes checked 2026-11-02), the Docker image build, and a real Wazuh indexer (including `case_insensitive` support).
+- **Never run against the live service:** URLScan, GitHub code search (needs a token), Gemini, Telegram CTI
+  (Telethon), HIBP and MalwareBazaar. **Run live** (2026-11-14/15): the Docker image build, CISA KEV, FIRST EPSS,
+  GitHub repository search without a token, the reference datasets including the OSV per-advisory fetch, and Caddy's
+  internal-CA HTTPS. The Bot API answered `/status`, `/digest` and `/latest` for the owner (2026-11-05). The Wazuh DSL
+  is tested on the official Wazuh indexer 4.14.7, OpenSearch 2.19.5, including `case_insensitive`, on 2026-11-08.
 - **JARM pinning uses pyjarm 0.0.5 internals** (`processors/pivot.py::_pinned_jarm`). Re-run `tests/test_netguard.py` after any pyjarm upgrade.
-- **Phase 2 tests claimed earlier but missing from the repository:** brand matcher, AiTM scoring, clipboard-lure detection, KEV↔tech-tag matching, fake-PoC heuristics, Retry-After handling, JARM against a real TLS server.
-- **Review findings not fixed yet (2026-11-02):** `assert` in `dispatch/dispatcher.py` (vanishes under `python -O`); `ShodanPivot` and the cluster states `merged`/`suppressed` are never used; no LICENSE file; `scripts/export_contracts.py` writes platform line endings (CRLF on Windows), so regenerate contracts on Linux or normalise to LF.
-- **No retention job** for `raw_intel_events` and `ai_compilations`. No structured logging or metrics. No API rate limiting. Feedback errors allow tenant-slug enumeration. The base image is not pinned by digest.
+- **Wazuh stores Windows event values with doubled backslashes** (D-53). The DSL emitter and the harness account for
+  it; any new Wazuh-side value or test document must too.
+- **Integration Kit:** Wazuh tested end to end (2026-11-08); no run yet against a real Elasticsearch or Splunk. pySigma's `ecs_windows` mapping uses `.caseless` process fields that exist in Elastic Defend data; other Elastic sources may need `ecs_windows_old`.
+- **Collectors run only on schedule.** After a fresh start, reference datasets arrive at the next 6-hourly slot and HIBP at 03:30 UTC; trigger a first run by hand (`celery -A app.worker.celery_app:celery_app call collectors.reference_sync`).
+- **The default public CertStream endpoint delivers nothing:** `wss://certstream.calidog.io/` accepted a connection but sent no certificate within 20 s (2026-11-05). Self-host certstream-server-go and set `HC_CERTSTREAM_URL` (profile `certstream`, verified 2026-11-09).
+- **Phase H closed the 2026-11-02 review findings** (dispatcher `assert`, Shodan pivot, LICENSE, CRLF contracts) and the
+  hardening gaps (retention, JSON logs, rate limits, tenant enumeration, image pins). Still open: no metrics endpoint
+  (D-58) and backups stay on the same host (D-60). HTTPS with a public hostname is optional since D-72. The restore
+  and the self-hosted CertStream stream passed on 2026-11-09; HTTPS was checked with Caddy's local CA.
+- **Worker memory:** about 650 MiB. The MISP warninglists (~300 MiB) are loaded once before the pool forks and
+  shared by the 4 task processes (D-75, measured 2026-11-15). Keep that preload when changing the worker start-up.
+- **`pip-audit` flags `diskcache` 5.6.3** (PYSEC-2026-2447, pickle in the cache directory; no fixed version). It comes
+  with pySigma, which uses it only to cache MITRE data that HuntCompiler never loads. CI ignores that one ID (owner,
+  2026-11-15, D-74); drop the exception once a fixed version is locked.
+- **A blank `.env` value means "not set"** (D-62). Never test a key with `is None` alone in new code paths that read
+  the environment some other way.
 - **Coverage gaps:** V1 token replay, device code and OAuth consent (Q6); V2 WAF export (Q9); V3 process+network correlation; V6 SEO installers; Linux (Q7).
 
 ## 6. Where things are
@@ -153,11 +187,12 @@ python -m scripts.telegram_login
 ```
 app/core        settings, crypto, signing, netguard (SSRF)   app/schemas   contracts, enums, validators
 app/collectors  L1 sources + Celery tasks          app/processors   L2 whitelist, unpacker, pivot, matcher, leak redactor
-app/compiler    L3 DSL, KQL, harness, templates, AI, scoring
+app/compiler    L3 DSL, harness, templates, AI, scoring
 app/services    clustering, packs, AI evidence     app/dispatch     push      app/api   pull, feedback, health
 app/integrations/telegram   (Phase T) Bot API client, formatting, digest, bot
 app/worker      Celery app, runtime, health heartbeats (Redis)
 migrations/     4 revisions                        contracts/       JSON Schemas + example pack
 config/         sample tenant manifest             scripts/         load_manifest, export_contracts, telegram_login
-docs/           AI_RISK_ASSESSMENT.md              tests/           170 tests (unit + PostgreSQL integration)
+docs/           AI_RISK_ASSESSMENT.md, plans/ (Vietnamese)   tests/   349 tests (unit + PostgreSQL integration)
+integration_kit/  Phase I: README, guides (Wazuh, Elastic, Splunk), reference consumer (integrator side, own deps)
 ```

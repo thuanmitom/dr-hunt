@@ -5,6 +5,7 @@ import hashlib
 import logging
 import uuid
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -62,6 +63,26 @@ def http_client(**headers: str) -> httpx.AsyncClient:
     )
 
 
+MAX_RETRY_AFTER_SECONDS = 120
+
+
+def retry_after_seconds(value: str | None, default: float, *, now: datetime | None = None) -> float:
+    """``Retry-After`` as delay-seconds or as an HTTP-date (RFC 9110 §10.2.3). Anything unreadable -> ``default``."""
+    if not value or not value.strip():
+        return default
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(value.strip())
+    except (TypeError, ValueError, IndexError):
+        return default
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - (now or datetime.now(UTC))).total_seconds())
+
+
 async def get_json(client: httpx.AsyncClient, url: str, *, retries: int = 3, **kwargs: Any) -> Any:
     """GET with polite back-off on 429/5xx (honours Retry-After)."""
     for attempt in range(retries + 1):
@@ -69,9 +90,10 @@ async def get_json(client: httpx.AsyncClient, url: str, *, retries: int = 3, **k
         if resp.status_code == 429 or resp.status_code >= 500:
             if attempt == retries:
                 resp.raise_for_status()
-            wait = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
+            backoff = float(2 ** (attempt + 1))
+            wait = min(retry_after_seconds(resp.headers.get("Retry-After"), backoff), MAX_RETRY_AFTER_SECONDS)
             log.warning("GET %s -> %s, retrying in %.0fs", url, resp.status_code, wait)
-            await asyncio.sleep(min(wait, 120))
+            await asyncio.sleep(wait)
             continue
         resp.raise_for_status()
         return resp.json()

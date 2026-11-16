@@ -122,7 +122,6 @@ certifi==2026.10.23 \
     # via
     #   httpcore
     #   httpx
-    #   pysigma-backend-kusto
     #   requests
 certstream==1.12 \
     --hash=sha256:e692d65ea9447a5db6cd146c5969af6434edd87163fe0b100962bb5d7d223ddb
@@ -1425,16 +1424,11 @@ pysigma==1.5.1 \
     # via
     #   -r requirements.in
     #   pysigma-backend-elasticsearch
-    #   pysigma-backend-kusto
     #   pysigma-pipeline-sysmon
     #   pysigma-pipeline-windows
 pysigma-backend-elasticsearch==2.1.1 \
     --hash=sha256:0bb514ae02445d2053d530bd732c8747ffac9184246d45f3fa2669d0862a5af4 \
     --hash=sha256:0cfb6b8e7892591c3bc83ef4dea4c4ef5cf8fe9e53e27dc3b0e9112bb3427fa6
-    # via -r requirements.in
-pysigma-backend-kusto==1.0.1 \
-    --hash=sha256:4c7d50bc230c82cc30cf35cdea1c381ca744b3194107e6419d0ba0cd8bfd1224 \
-    --hash=sha256:8b6a6763a2839b8bc75e333ea2bcb2f3bb07d98b46072a1bef602c1e9b504799
     # via -r requirements.in
 pysigma-pipeline-sysmon==2.0.0 \
     --hash=sha256:84575bbde5dd891882306ca1f6ce16bdc592da2e511ac8960012af2efb9d120b \

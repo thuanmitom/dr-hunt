@@ -25,7 +25,7 @@ def backoff_seconds(attempt: int) -> float:
 async def deliver_due(session: AsyncSession, client: httpx.AsyncClient, *, batch: int = 20,
                       now: datetime | None = None) -> dict[str, int]:  # fmt: skip
     now = now or datetime.now(UTC)
-    counts = {"delivered": 0, "retrying": 0, "dead_letter": 0, "skipped": 0}
+    counts = {"delivered": 0, "retrying": 0, "dead_letter": 0, "skipped": 0, "awaiting_pull": 0}
     packs = (
         await session.scalars(
             select(HuntingPack)
@@ -44,7 +44,12 @@ async def deliver_due(session: AsyncSession, client: httpx.AsyncClient, *, batch
             counts["skipped"] += 1
             continue
         tenant = await session.get(Tenant, pack.tenant_id)
-        assert tenant is not None and tenant.webhook_url
+        if tenant is None or not tenant.webhook_url:
+            # The tenant switched to pull (or lost its webhook) after the pack was queued: hand the pack to the pull
+            # API instead of failing the whole batch. An `assert` here vanished under `python -O`.
+            pack.delivery_status, pack.next_attempt_at = DeliveryStatus.AWAITING_PULL, None
+            counts["awaiting_pull"] += 1
+            continue
         delivery = TenantManifest.model_validate(tenant.manifest).delivery
         body = canonical_json(pack.payload)
         headers = build_signed_headers(tenant.webhook_secret, body, pack_id=str(pack.id), tenant_slug=tenant.slug)

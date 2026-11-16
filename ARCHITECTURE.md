@@ -1,6 +1,6 @@
 # OutSight HuntCompiler — Architecture
 
-Code version 0.4.0 · status date 2026-11-02 · Phase 4 (SOAR) cancelled; Phase T (Telegram) built, not yet verified live (`TELEGRAM.md`). Open questions are referenced as (Qn / TQn / IQn); the list is in §10.
+Code version 0.4.0 · status date 2026-11-05 · Phase 4 (SOAR) cancelled; Phases T (Telegram), I (Integration Kit) and H (hardening) built; the Wazuh path tested on Wazuh indexer 4.14.7 (2026-11-08), the rest not yet verified live. Open questions are referenced as (Qn / TQn / IQn); the list is in §10.
 
 ## 1. System context
 
@@ -8,7 +8,7 @@ Code version 0.4.0 · status date 2026-11-02 · Phase 4 (SOAR) cancelled; Phase 
                     ┌──────────────────────────── INTERNET ─────────────────────────────┐
   Intel sources ───►│                       OutSight HuntCompiler                        │
   CertStream, URLScan, CISA KEV,       ┌────────┐  ┌────────────┐  ┌──────────┐  ┌──────┐ │
-  FIRST EPSS, GitHub, Shodan,          │ L1     │─►│ L2 pivot / │─►│ L3       │─►│ L4   │ │
+  FIRST EPSS, GitHub,                  │ L1     │─►│ L2 pivot / │─►│ L3       │─►│ L4   │ │
   Telegram (CTI, read-only),           │collect │  │ unpack /   │  │ compile  │  │ store│ │
   HIBP, MalwareBazaar, LOLDrivers,     └────────┘  │ guardrails │  │ (+ LLM)  │  │ API  │ │
   LOLRMM, HijackLibs, OSV                          └────────────┘  └────┬─────┘  └──┬───┘ │
@@ -35,18 +35,18 @@ Code version 0.4.0 · status date 2026-11-02 · Phase 4 (SOAR) cancelled; Phase 
 | | `app/core/netguard.py` | SSRF guard for active probes: public IPs only, ports 443/80, pinned IP, redirects re-validated (D-46) |
 | Contracts | `app/schemas/` | Hunting Pack v2.0, manifest, feedback, enums, observable validators |
 | L1 Collectors | `collectors/urlscan.py` | V1 AiTM candidates, V3 clipboard lures (DOM) |
-| | `collectors/edge_exploits.py` | V2: KEV + EPSS + GitHub PoCs (fake-PoC heuristics) + Nuclei |
+| | `collectors/edge_exploits.py` | V2: KEV + EPSS + GitHub PoCs (fake-PoC heuristics) + Nuclei; KEV classification edge/endpoint (D-70) |
 | | `collectors/certstream_watcher.py` | V1 lookalike certificates (own container) |
 | | `collectors/telegram_cti.py`, `hibp.py` | V1 credential exposure (pseudonymous) |
 | | `collectors/reference_data.py` | LOLDrivers, LOLRMM, HijackLibs, OSV MAL (index + per-advisory, D-47), MalwareBazaar |
 | | `collectors/tasks.py`, `tasks_2b.py` | Celery tasks, schedules, ingestion |
 | L2 Processors | `processors/whitelist_filter.py` | `block` / `hunt_only` / `drop` per hostname or IP |
 | | `processors/stager_unpacker.py` | Static recursive de-obfuscation + IOC extraction |
-| | `processors/pivot.py` | JARM and favicon mmh3 through `netguard` (pinned IP), Shodan pivot (not wired yet), AiTM scoring |
+| | `processors/pivot.py` | JARM and favicon mmh3 through `netguard` (pinned IP), AiTM scoring |
 | | `processors/brand_matcher.py` | Homoglyph / IDN / edit-distance lookalikes |
 | | `processors/leak_redactor.py` | Account refs (HMAC), masking, passwords dropped |
 | L3 Compiler | `compiler/wazuh_dsl.py` | pySigma tree → case-insensitive OpenSearch DSL |
-| | `compiler/translate.py` | DSL + Defender KQL (pySigma Kusto), KQL lint |
+| | `compiler/translate.py` | Sigma → Wazuh DSL only (no KQL since D-63) |
 | | `compiler/harness.py` | Executes the emitted DSL subset on sample events |
 | | `compiler/templates.py` | Deterministic hunts per vector (+ per-tenant) |
 | | `compiler/draft.py`, `prompt.py`, `llm.py`, `ai_compiler.py` | Constrained LLM output, redaction/fencing, provider, 6 gates |
@@ -59,7 +59,7 @@ Code version 0.4.0 · status date 2026-11-02 · Phase 4 (SOAR) cancelled; Phase 
 | | `api/routes.py`, `api/main.py` | `GET /api/v1/packs`, `POST /api/v1/feedback`, `/healthz`, `/readyz` |
 | Human interface (Phase T) | `app/integrations/telegram/` — `client.py`, `format.py`, `digest.py`, `bot.py` | Digest task `notify.telegram_digest`, long-polling bot, DB-only commands (see `TELEGRAM.md`) |
 | | `app/worker/health.py` | Collector heartbeats in Redis for the Health section (D-48) |
-| Consumers (Phase I) | Integration Kit docs and examples | Pull or receive packs, verify HMAC, substitute placeholders, run hunts, post feedback. Phase 4 SOAR is cancelled |
+| Consumers (Phase I) | `integration_kit/`: README, guides for Wazuh, Elastic and Splunk, reference consumer (`signing`, `validate`, `placeholders`, `accounts`, `convert`, `client`, `state`, `runner`, `receiver`, `adapters/`) | Runs on the integrator's side, never in the HuntCompiler image: pull or receive packs, verify HMAC, re-validate, substitute placeholders, run hunts, post feedback (D-49 to D-51) |
 
 ## 3. Data model (PostgreSQL 16, 4 Alembic revisions)
 
@@ -138,7 +138,7 @@ Enums are VARCHAR + CHECK, and their values are append-only.
 1. Telegram text or HIBP domain data is parsed by `leak_redactor`. Passwords are dropped there.
 2. Each account becomes `ref = HMAC(HMAC(tenant_secret, "account-ref/v1"), lower(account))` plus a masked form.
 3. Events go into a tenant cluster.
-4. The pack carries `affected_accounts`, `notify_only_on_sighting=false`, and a task using `${HC_AFFECTED_UPNS}` / `${HC_AFFECTED_SAM_ACCOUNTS}`.
+4. The pack carries `affected_accounts`, `notify_only_on_sighting=false`, and a task using `${HC_AFFECTED_SAM_ACCOUNTS}` (failed logons, 4625). `${HC_AFFECTED_UPNS}` was used only by the Entra KQL removed in D-63.
 5. The consumer resolves the refs against its own directory (documented in the Integration Kit).
 
 ### 4.6 Telegram digest (Phase T)
@@ -148,18 +148,29 @@ Enums are VARCHAR + CHECK, and their values are append-only.
 3. A `sending` row is committed, the messages are sent, then the row becomes `sent`. On any failure it becomes `failed` and the marks stay, so the next run covers the same window.
 4. `/digest` renders the same window into a `preview` row, which never counts as a mark.
 
+### 4.7 Integration Kit consumer (Phase I, integrator side)
+
+1. `pull` fetches pages after the local cursor; each item's signature is checked and the pack re-validated, then queued in the local inbox (bad ones go to `rejected/`). The cursor moves only after each item is handled.
+2. `run` takes each inbox pack: placeholder values come from a local file, exposed-account refs are resolved against a local directory export.
+3. Wazuh gets the pack's DSL inside a time-range filter; Elastic and Splunk get the converted Sigma rule.
+4. Feedback carries only `sighting` and `evaluable`; counts, the query and a few event ids stay in the local report. A platform outage leaves the pack in the inbox.
+
 ## 5. Deployment (docker-compose)
 
 | Service | Command | Networks | Notes |
 |---|---|---|---|
-| `postgres` | postgres:16-alpine | `backend` (internal) | volume `pg_data` |
+| `postgres` | postgres:16-alpine (pinned by digest) | `backend` (internal) | volume `pg_data` |
 | `redis` | redis:7-alpine, `requirepass`, AOF, `noeviction` | `backend` | Celery broker (db 0), results (db 1), cache and locks (db 2) |
 | `migrate` | `alembic upgrade head` | `backend` | one-shot; other app services wait for it |
-| `api` | uvicorn :8000 | `backend`, `egress` | published on 127.0.0.1 only; put a TLS reverse proxy in front (Q3) |
+| `api` | uvicorn :8000 | `backend`, `egress`, `edge` (alias `api-edge`) | published on 127.0.0.1 only; profile `edge` puts Caddy in front (D-59); rate limits in Redis (D-56); `X-Forwarded-For` trusted from Caddy's fixed `edge` address only (D-66) |
 | `worker` | celery worker, queues `default,collectors,compiler,dispatch` | `backend`, `egress` | |
 | `beat` | celery beat, schedule in `/tmp` | `backend`, `egress` | |
-| `certstream` | `python -m app.collectors.certstream_watcher` | `backend`, `egress` | self-hosted CertStream server recommended |
+| `certstream` | `python -m app.collectors.certstream_watcher` | `backend`, `egress` | point `HC_CERTSTREAM_URL` at `certstream-server` (D-61) |
 | `telegram-bot` *(Phase T)* | `python -m app.integrations.telegram.bot` | `backend`, `egress` | compose profile `telegram` (start with `docker compose up -d telegram-bot`); `restart: on-failure`, exits 0 when disabled; long polling; Bot API identity separate from the Telethon CTI account |
+
+| `caddy` *(Phase H, profile `edge`)* | Caddy 2.10, HTTPS for `HC_PUBLIC_HOSTNAME`: Let's Encrypt, or Caddy's local CA with `HC_TLS_MODE=internal` (D-72) | `egress`, `edge` (fixed `HC_EDGE_CADDY_IP`) | ports 80/443; only `/api/v1/*` and `/healthz` (D-59) |
+| `backup` *(Phase H, profile `backup`)* | `deploy/backup.sh` (`pg_dump -Fc` daily) | `backend` | volume `pg_backups`, newest `HC_BACKUP_KEEP` (14) kept (D-60) |
+| `certstream-server` *(Phase H, profile `certstream`)* | certstream-server-go v1.10.1 | `egress` | Calidog-compatible stream at `ws://certstream-server:8080/`, not published (D-61) |
 
 All app containers run from one image:
 - non-root uid 10001;
@@ -179,6 +190,9 @@ All app containers run from one image:
 | Pack building | 10 min |
 | Push dispatch | 1 min |
 | Telegram digest | `HC_TGBOT_DIGEST_TIMES` (default 08:00 Asia/Ho_Chi_Minh) |
+| Data retention (Phase H) | daily 02:45 UTC |
+| KEV GitHub retry (Phase R, D-71) | daily 04:15 UTC |
+| Ops alerts (Phase Q, opt-in) | 5 min, only when `HC_TGBOT_OPS_ALERTS=true` |
 
 ## 6. Technology stack (pinned)
 
@@ -189,10 +203,11 @@ All app containers run from one image:
 | Data | PostgreSQL 16, SQLAlchemy 2.1.6 (async) + asyncpg 0.32.0, Alembic 1.20.1 |
 | Jobs | Celery 5.6.3, Redis 7, redis-py 6.4.0 |
 | HTTP / crypto | httpx 0.28.1, cryptography 50.0.2 |
-| Detection | pySigma 1.5.1, backend-elasticsearch 2.1.1 (unused for output), backend-kusto 1.0.1, pipeline-sysmon 2.0.0, pipeline-windows 2.0.1 |
+| Detection | pySigma 1.5.1, backend-elasticsearch 2.1.1 (unused for output), pipeline-sysmon 2.0.0, pipeline-windows 2.0.1 |
 | Intel / pivot | certstream 1.12, Telethon 1.45.0, pyjarm 0.0.5, mmh3 5.3.1, pymispwarninglists 1.7.0, tldextract 5.4.0 (offline PSL) |
 | AI | google-genai 2.34.0 behind the `LLMProvider` protocol |
-| Quality | pytest 9.2, pytest-asyncio 1.4, ruff; 170 tests (2026-11-02) |
+| Quality | pytest 9.2, pytest-asyncio 1.4, ruff, pip-audit; 349 tests (2026-11-15); CI workflow `.github/workflows/ci.yml` (D-74) |
+| Integration Kit | Own hash-locked `integration_kit/requirements.txt`: httpx 0.28.1, jsonschema 4.26.0, pySigma 1.5.1 with the Elasticsearch 2.1.1 and Splunk 2.1.0 backends |
 | Supply chain | `requirements.in` → `uv pip compile --generate-hashes` → `--require-hashes` |
 
 ## 7. External dependencies
@@ -200,17 +215,18 @@ All app containers run from one image:
 | Dependency | Auth | Used for | Live-verified |
 |---|---|---|---|
 | URLScan.io search / result / DOM | API key | V1, V3 | No (query syntax depends on plan) |
-| CISA KEV JSON, FIRST EPSS | none | V2 | No |
-| GitHub search, trees, raw | token recommended | V2 PoCs, Nuclei, V6 | Partly (raw/codeload reachable) |
-| Shodan host search | paid key for filters | JARM/favicon pivot | No |
-| CertStream websocket | none | V1 | No |
+| CISA KEV JSON, FIRST EPSS | none | V2 | **Yes** (2026-11-14 and 2026-11-15) |
+| GitHub search, trees, raw | token recommended (enrichment only, D-54; missed data retried daily, D-71) | V2 PoCs, Nuclei, V6 | Partly: repository search, trees and raw files ran live without a token (2026-11-15; the hourly limit ran out and D-71 recovered the data). Code search needs a token (401 without) and has not run live |
+| CertStream websocket | none | V1 | **Yes**, self-hosted (2026-11-09); the public endpoint sends nothing |
+| certstream-server-go (self-hosted) | none (reads public CT logs) | V1 | **Yes** (2026-11-09) |
+| Let's Encrypt (through Caddy) | none | HTTPS for tenants (optional since D-72) | No. Caddy's local CA (`HC_TLS_MODE=internal`) ran live 2026-11-15 |
 | Telegram MTProto (Telethon) | API id/hash + StringSession | V1 | No |
 | HIBP breacheddomain | key + verified domain | V1 | No |
 | MalwareBazaar API | Auth-Key | V1 | No |
-| OSV ecosystem index (`modified_id.csv`) + per-advisory JSON | none | V6 | Partly (index format and file sizes checked 2026-11-02) |
-| LOLDrivers / LOLRMM raw JSON, HijackLibs archive | none | V4, V5 | **Yes** (formats verified 2026-10-31) |
+| OSV ecosystem index (`modified_id.csv`) + per-advisory JSON | none | V6 | **Yes** (collected live 2026-11-14 and 2026-11-15) |
+| LOLDrivers / LOLRMM raw JSON, HijackLibs archive | none | V4, V5 | **Yes** (formats verified 2026-10-31; collected live 2026-11-14 and 2026-11-15) |
 | Gemini API | API key | AI compiler | No |
-| Telegram Bot API (Phase T) | BotFather token | Digest and commands | No |
+| Telegram Bot API (Phase T) | BotFather token | Digest and commands | Partly: `/status`, `/digest` preview and `/latest` answered in the owner's chat (2026-11-05); the rest of `TELEGRAM.md` §9 is open |
 | MISP warninglists (bundled) | — | Whitelist | **Yes** |
 
 ## 8. Wire contract (summary)
@@ -219,7 +235,7 @@ All app containers run from one image:
 - **Signature:** `sha256=HMAC_SHA256(secret, f"{timestamp}." + raw_body)`. Tolerance is 300 s; de-duplicate on `pack_id`.
 - **Placeholders:**
   - DSL: an array element equal to `${HC_X}` is expanded into the list of values.
-  - KQL: `${HC_X}` is replaced by quoted, comma-separated values.
+  - KQL (only in packs issued before D-63): `${HC_X}` is replaced by quoted, comma-separated values.
 
 ## 9. Threat model of HuntCompiler itself
 
@@ -248,7 +264,7 @@ All app containers run from one image:
 | T1 | Poisoned intel produces harmful packs (block legit infrastructure, flood alerts) | Whitelist; deterministic blocklist; contract guardrails; breadth and provenance gates; auto-block opt-in at confidence ≥ 80 | Over-blocking is possible for exact FQDNs that a poisoner chooses |
 | T2 | Prompt injection via PoC or ClickFix content | Schema-only output; nonce fences; 6 gates; no tenant data in prompts; audit | The AI summary can mislead an analyst. Telegram escapes it and labels it `[AI]` (Phase T); consumers must render it as plain text |
 | T3 | Poisoned evidence makes AI hunts miss | Fake-PoC heuristics; templates ship regardless | **High:** zero hits on an AI task never proves absence |
-| T4 | **HuntCompiler host compromise** → malicious packs to every tenant | Per-tenant secrets; read-only queries; contract limits; auto-block off by default | **High impact:** the Integration Kit must tell consumers to re-validate packs against the JSON Schema and guardrails, and to require approval for blocking |
+| T4 | **HuntCompiler host compromise** → malicious packs to every tenant | Per-tenant secrets; read-only queries; contract limits; auto-block off by default | **High impact.** The Integration Kit tells consumers to re-validate packs against the JSON Schema and guardrails and to require approval for blocking; the reference consumer does both (D-51) |
 | T5 | **SSRF through active probes**: a "malicious" domain resolving to 127.0.0.1, RFC1918 or 169.254.169.254; favicon fetch follows redirects | Probes run only on `block`-class domains. `app/core/netguard.py` resolves first, refuses any non-global address and ports other than 443/80, pins the validated IP (favicon: `Host` + SNI; JARM: hellos for the hostname sent to the IP) and re-validates each redirect (max 3). Size and time caps | JARM pinning relies on pyjarm 0.0.5 internals (hash-pinned, tested) |
 | T6 | Secret leakage | Env references, Fernet at rest, token hashes, `.env` excluded from image and git | No secret manager; rotation is manual; logs are not scrubbed systematically |
 | T7 | Cross-tenant inference | LLM evidence is tenant-agnostic; feedback is content-minimal | Shared `sighting_count` raises confidence for other tenants (implies "someone was hit"); KEV prompts imply some tenant runs that vendor |
@@ -266,10 +282,10 @@ All app containers run from one image:
 | ID | Question |
 |---|---|
 | Q1 | Who is the target: lab, employer, or SME service? |
-| Q2 | Is pull confirmed as the default for integrators? |
+| Q2 | Is pull confirmed as the default for integrators? Answered 2026-11-05: yes, with a push example. |
 | Q3 | Where does it run, and how do integrators reach it? |
 | Q7 | Are Linux hunts in scope? |
-| Q8 | What does `auto_block_pre_iocs` mean for integrators? |
+| Q8 | What does `auto_block_pre_iocs` mean for integrators? Answered 2026-11-05: a hint; a human decides. |
 | Q12 | Which LLM provider and tier? |
 | Q13 | Does the contract version stay 2.0? |
 
@@ -286,6 +302,6 @@ All app containers run from one image:
 
 | ID | Question |
 |---|---|
-| IQ1 | More query languages in packs (SPL, ECS), or Sigma conversion by integrators? |
-| IQ2 | What should the Zabbix integration do? |
-| IQ3 | Platform order. |
+| IQ1 | More query languages in packs (SPL, ECS), or Sigma conversion by integrators? Answered: conversion (D-49). |
+| IQ2 | What should the Zabbix integration do? Answered: out of scope (D-50). |
+| IQ3 | Platform order. Answered: Wazuh, Elastic, Splunk (D-50). |

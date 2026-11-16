@@ -202,6 +202,16 @@ class CveItem:
 
 
 @dataclass(frozen=True, slots=True)
+class PatchItem:
+    """D-70: an exploited CVE in OS or desktop software that matched a tenant; no hunting pack, patch it."""
+
+    cve: str
+    title: str
+    epss_percentile: float | None
+    tenants: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetItem:
     name: str
     records: int
@@ -233,10 +243,11 @@ class DigestData:
     cves: tuple[CveItem, ...]
     datasets: tuple[DatasetItem, ...]
     health: HealthReport
+    patches: tuple[PatchItem, ...] = ()
 
     @property
     def is_empty(self) -> bool:
-        return not self.lines and not self.datasets
+        return not self.lines and not self.datasets and not self.patches
 
 
 # --- renderers -----------------------------------------------------------------------------------------
@@ -328,6 +339,13 @@ def render_digest(d: DigestData, *, top: int, tz: ZoneInfo, preview: bool = Fals
             epss = f"EPSS p{round(c.epss_percentile * 100)}" if c.epss_percentile is not None else "EPSS n/a"
             rows.append(f"• <code>{escape(c.cve)}</code> {safe(c.title, 120)} · {epss} · credible PoC: "
                         f"{'yes' if c.credible_poc else 'no'} · {escape(', '.join(c.tenants))}")  # fmt: skip
+        sections.append("\n".join(rows))
+    if d.patches:
+        rows = ["<b>Exploited CVEs to patch</b> (OS or desktop software: no hunting pack)"]
+        for c in d.patches:
+            epss = f"EPSS p{round(c.epss_percentile * 100)}" if c.epss_percentile is not None else "EPSS n/a"
+            tenants = escape(", ".join(c.tenants))
+            rows.append(f"• <code>{escape(c.cve)}</code> {safe(c.title, 120)} · {epss} · {tenants}")
         sections.append("\n".join(rows))
     if d.datasets:
         rows = ["<b>Dataset updates</b>"]

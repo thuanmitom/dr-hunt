@@ -1,0 +1,51 @@
+# HTTPS entry for the tenant API (compose profile `edge`, D-59, D-72).
+# HC_TLS_MODE picks where the certificate comes from:
+#   public   (default) Let's Encrypt or ZeroSSL for HC_PUBLIC_HOSTNAME: its DNS must point to this host and ports 80
+#            and 443 must be reachable from the Internet.
+#   internal Caddy's own local CA, for a LAN without a public name. HC_PUBLIC_HOSTNAME is then the LAN name or IP the
+#            consumer uses. Consumers trust the root certificate (INSTALL.md, "HTTPS inside the LAN").
+# Any other value stops Caddy at startup ("File to import not found"). Only the tenant API and the liveness probe are
+# exposed; /readyz, /docs and everything else answer 404.
+{
+	# internal mode: never try to add the local CA to the container's trust store
+	skip_install_trust
+}
+
+(tls_public) {
+	# automatic HTTPS: nothing to add
+}
+
+(tls_internal) {
+	tls internal
+}
+
+{$HC_PUBLIC_HOSTNAME} {
+	import tls_{$HC_TLS_MODE:public}
+	encode zstd gzip
+
+	request_body {
+		max_size 1MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	@api path /api/v1/* /healthz
+	handle @api {
+		# Through the internal `edge` network: Caddy's fixed address there is the only one uvicorn trusts for
+		# X-Forwarded-For, which feeds the per-IP limits (D-56, D-66).
+		reverse_proxy api-edge:8000
+	}
+
+	handle {
+		respond 404
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

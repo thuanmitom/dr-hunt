@@ -1,0 +1,11 @@
+# Reference consumer dependencies. Independent of the HuntCompiler service (never installed into its image).
+# Lock with hashes:
+#   uv pip compile --generate-hashes --python-version 3.12 --python-platform x86_64-manylinux_2_28 -o integration_kit/requirements.txt integration_kit/requirements.in
+httpx==0.28.1
+jsonschema==4.26.0
+pyyaml==6.0.3
+pysigma==1.5.1
+pysigma-backend-elasticsearch==2.1.1
+pysigma-backend-splunk==2.1.0
+pysigma-pipeline-sysmon==2.0.0
+pysigma-pipeline-windows==2.0.1

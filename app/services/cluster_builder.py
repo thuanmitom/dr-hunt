@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.collectors.edge_exploits import classify_kev
 from app.compiler.scoring import DEFAULT_HALF_LIFE_HOURS, base_confidence
 from app.db.models import PivotedCluster, RawIntelEvent, cluster_event_links
 from app.processors.whitelist_filter import Action, WhitelistFilter, registrable
@@ -62,6 +63,7 @@ def derive(event: RawIntelEvent, obs: dict[str, list[str]]) -> tuple[str, dict[s
             "credible_poc": any(not x.get("likely_fake") for x in p.get("pocs", [])),
             "nuclei_template": bool(p.get("nuclei_templates")),
             "ransomware_use": kev.get("knownRansomwareCampaignUse") == "Known",
+            "kev_class": classify_kev(kev.get("vendorProject", ""), kev.get("product", "")),  # D-70
         }
         return f"v2:cve:{event.external_id}", features, [event.external_id], tags
     if vector is AttackVector.CLICKFIX_FILELESS:

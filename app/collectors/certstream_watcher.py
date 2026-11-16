@@ -17,6 +17,7 @@ import redis
 
 from app.collectors.base import IntelSignal, Observable
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.db.session import build_engine, session_scope
 from app.processors.brand_matcher import BrandMatcher
 from app.schemas.enums import AttackVector, IntelSource
@@ -110,5 +111,5 @@ class Watcher:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=get_settings().log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    configure_logging(get_settings().log_level, get_settings().log_format)
     Watcher().run()

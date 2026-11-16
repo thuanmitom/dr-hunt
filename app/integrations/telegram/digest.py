@@ -28,6 +28,7 @@ from celery.schedules import crontab
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.collectors.edge_exploits import KEV_ENDPOINT
 from app.core.config import Settings, get_settings
 from app.db.models import (
     AiCompilation,
@@ -46,6 +47,7 @@ from app.integrations.telegram.format import (
     DigestData,
     ExposureItem,
     HealthReport,
+    PatchItem,
     cluster_label,
     defang_text,
     render_digest,
@@ -195,6 +197,40 @@ async def _datasets(session: AsyncSession, prev: Marks, cap: Marks) -> list[Data
     return [DatasetItem(name, latest[name], new[name]) for name in sorted(latest)]
 
 
+async def _patches(session: AsyncSession, tenants_shown: Iterable[str], prev: Marks, cap: Marks,
+                   with_pack: set[tuple[str, str]]) -> list[PatchItem]:  # fmt: skip
+    """D-70: KEV entries for OS or desktop software linked in this window that match a shown tenant's tech stack.
+    They normally get no hunting pack. A tenant that did get one in this window (AI tasks, or the product listed in
+    its login portals) sees it in the edge CVE section instead; ``with_pack`` holds those (cluster id, slug) pairs."""
+    if cap.max_link_at is None:
+        return []
+    stmt = (
+        select(PivotedCluster)
+        .join(cluster_event_links, cluster_event_links.c.cluster_id == PivotedCluster.id)
+        .join(RawIntelEvent, RawIntelEvent.id == cluster_event_links.c.event_id)
+        .where(RawIntelEvent.source == IntelSource.CISA_KEV, cluster_event_links.c.linked_at <= cap.max_link_at)
+    )
+    if prev.max_link_at is not None:
+        stmt = stmt.where(cluster_event_links.c.linked_at > prev.max_link_at)
+    clusters = {str(c.id): c for c in (await session.scalars(stmt)).all()}
+    shown = set(tenants_shown)
+    rows = (await session.execute(select(Tenant.slug, Tenant.tech_stack_tags).where(Tenant.is_active))).all()
+    tenant_tags = [(slug, set(tags or [])) for slug, tags in rows if not shown or slug in shown]
+    out = []
+    for cid, c in clusters.items():
+        features = (c.pivot_graph or {}).get("features") or {}
+        if features.get("kev_class") != KEV_ENDPOINT:
+            continue
+        matched = (slug for slug, tags in tenant_tags if tags & set(c.tech_stack_tags or []))
+        slugs = tuple(sorted(slug for slug in matched if (cid, slug) not in with_pack))
+        if not slugs:
+            continue
+        pct = features.get("epss_percentile")
+        cve = (c.cve_ids or [c.cluster_key.rsplit(":", 1)[-1]])[0]
+        out.append(PatchItem(cve, c.title, float(pct) if pct is not None else None, slugs))
+    return sorted(out, key=lambda p: p.cve)
+
+
 async def collect_health(session: AsyncSession, redis: Any, settings: Settings, *, now: datetime,
                          since: datetime | None) -> HealthReport:  # fmt: skip
     """Collector heartbeats (Redis), LLM budget (Redis), AI verdicts since ``since`` and dead letters (DB)."""
@@ -227,10 +263,12 @@ async def build_digest(session: AsyncSession, settings: Settings, *, prev: Marks
     old = await _older_clusters(session, cluster_ids, settings.tgbot_tenants, prev.max_pack_seq)
     lines = build_lines(rows, old)
     clusters = {str(r[2].id): r[2] for r in rows}
+    packed = {(str(r[2].id), r[1]) for r in rows}
     return DigestData(
         window_start=window_start, window_end=now, lines=tuple(lines),
         exposures=tuple(await _exposures(session, lines, clusters)), cves=tuple(_cves(lines, clusters)),
         datasets=tuple(await _datasets(session, prev, cap)), health=health,
+        patches=tuple(await _patches(session, settings.tgbot_tenants, prev, cap, packed)),
     )  # fmt: skip
 
 

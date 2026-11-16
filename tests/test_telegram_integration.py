@@ -181,7 +181,7 @@ async def test_nothing_new_gives_a_heartbeat_or_nothing(world, maker):
     assert (await run_digest(maker, _client(fake), FakeAsyncRedis(), _settings(), sleep=no_sleep))["status"] == "sent"
     [text] = fake.texts()
     assert "No new intelligence since" in text
-    assert "10 collectors not reported yet" in text  # empty Redis: never claimed healthy
+    assert "12 collectors not reported yet" in text  # empty Redis: never claimed healthy (retention H3, KEV retry D-71)
 
     quiet = FakeTelegram()
     out = await run_digest(maker, _client(quiet), FakeAsyncRedis(), _settings(tgbot_send_empty_digest=False),

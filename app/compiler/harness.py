@@ -8,15 +8,25 @@ import re
 from typing import Any
 
 from app.compiler.fields import SYSMON_CATEGORY_EVENT_ID, SYSMON_CHANNEL, wazuh_field
+from app.compiler.wazuh_dsl import wazuh_stored
+
+EVENTDATA = "data.win.eventdata."
 
 
 def sample_to_doc(sample: dict[str, Any], category: str | None, service: str | None = None) -> dict[str, str]:
-    doc = {wazuh_field(k): str(v) for k, v in sample.items()}
+    """A sample event (plain Sysmon/Windows values) as Wazuh indexes it: event data values keep Wazuh's doubled
+    backslashes, so the harness evaluates queries against what the indexer really holds (D-53)."""
+    doc = {}
+    for k, v in sample.items():
+        field = wazuh_field(k)
+        doc[field] = wazuh_stored(str(v)) if field.startswith(EVENTDATA) else str(v)
     if category in SYSMON_CATEGORY_EVENT_ID:
         doc.setdefault(wazuh_field("EventID"), str(SYSMON_CATEGORY_EVENT_ID[category]))
         doc.setdefault(wazuh_field("Channel"), SYSMON_CHANNEL)
     elif service == "security":
         doc.setdefault(wazuh_field("Channel"), "Security")
+    elif service == "system":
+        doc.setdefault(wazuh_field("Channel"), "System")
     return doc
 
 

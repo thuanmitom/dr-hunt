@@ -8,8 +8,9 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.collectors.edge_exploits import KEV_EDGE
 from app.compiler.scoring import EXPIRY_FLOOR, decayed, severity_for, with_feedback
-from app.compiler.templates import MITRE_DEFAULTS, baseline_tasks, tenant_tasks
+from app.compiler.templates import MITRE_DEFAULTS, baseline_tasks, edge_lateral_movement_tasks, safe, tenant_tasks
 from app.db.models import HuntingPack, PivotedCluster, ReferenceDataset
 from app.schemas.enums import AttackVector, ClusterStatus
 from app.schemas.hunting_pack import AUTO_BLOCK_MIN_CONFIDENCE, HuntingPackV2, HuntingTask, PreventionBlocklist
@@ -28,6 +29,16 @@ def eligible(cluster: PivotedCluster, tenant: TenantContext) -> bool:
     if cluster.attack_vector is AttackVector.EDGE_DEVICE_EXPLOIT:
         return bool(set(cluster.tech_stack_tags) & set(tenant.manifest.tech_stack_tags))
     return True
+
+
+def kev_is_edge_for(cluster: PivotedCluster, tenant: TenantContext) -> bool:
+    """D-70: the edge-appliance hunts apply when the KEV product is internet-facing, or when this tenant lists the
+    matched product in its login portals. Clusters built before D-70 have no ``kev_class``: old behaviour."""
+    features = (cluster.pivot_graph or {}).get("features") or {}
+    if features.get("kev_class", KEV_EDGE) == KEV_EDGE:
+        return True
+    portals = {p.product for p in tenant.manifest.login_portals if p.product}
+    return bool(set(cluster.tech_stack_tags) & set(tenant.manifest.tech_stack_tags) & portals)
 
 
 def substance_sha256(payload: dict) -> str:
@@ -74,9 +85,10 @@ async def build_packs(session: AsyncSession, *, ai_tasks: AiTasks | None = None,
             continue
         lookback = 30 if cluster.attack_vector is AttackVector.EDGE_DEVICE_EXPLOIT else 14
         obs = cluster.observables or {}
-        common = baseline_tasks(cluster.attack_vector, obs, lookback, ref)
-        if ai_tasks is not None:
-            common += await ai_tasks(cluster)
+        is_v2 = cluster.attack_vector is AttackVector.EDGE_DEVICE_EXPLOIT
+        base = baseline_tasks(cluster.attack_vector, obs, lookback, ref, edge_hunts=False)
+        edge = safe(edge_lateral_movement_tasks, lookback) if is_v2 else []
+        ai = await ai_tasks(cluster) if ai_tasks is not None else []
         blocklist = PreventionBlocklist(
             ttl_days=TTL_DAYS.get(cluster.attack_vector, 14),
             domains=obs.get("domains_block", []),
@@ -84,8 +96,10 @@ async def build_packs(session: AsyncSession, *, ai_tasks: AiTasks | None = None,
             hashes=obs.get("hashes", [])[:5000],
         )
         for tenant in targets:
-            tasks = common + tenant_tasks(cluster.attack_vector, obs, tenant.manifest.approved_rmm_tools, lookback, ref)
-            if not tasks:
+            # same task order as before D-70: templates, edge hunts, AI tasks, tenant tasks
+            tasks = base + (edge if is_v2 and kev_is_edge_for(cluster, tenant) else []) + ai
+            tasks += tenant_tasks(cluster.attack_vector, obs, tenant.manifest.approved_rmm_tools, lookback, ref)
+            if not tasks:  # e.g. an endpoint KEV without AI tasks: listed in the digest as a patch reminder instead
                 continue
             accounts = obs.get("accounts", []) if cluster.tenant_id == tenant.id else []
             auto_block = (

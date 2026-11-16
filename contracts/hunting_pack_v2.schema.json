@@ -75,7 +75,7 @@
             }
           ],
           "default": null,
-          "description": "Microsoft Defender XDR advanced hunting query",
+          "description": "Retired (D-63): no longer emitted, always null in new packs. Kept so that older packs stay valid; its guardrails still apply.",
           "title": "Kql Defender"
         }
       },

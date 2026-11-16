@@ -1,5 +1,5 @@
-"""Active pivoting on suspicious infrastructure: JARM, favicon MurmurHash3, Shodan/URLScan lookups,
-and AiTM (Evilginx-style) indicators from URLScan results.
+"""Active pivoting on suspicious infrastructure: JARM, favicon MurmurHash3, and AiTM (Evilginx-style)
+indicators from URLScan results. (A Shodan search adapter existed but was never wired; removed, D-55.)
 
 Operational notes:
 * Only hosts that are already suspicious are touched, at low rate, from the HuntCompiler egress IP
@@ -120,40 +120,6 @@ async def fetch_favicon_hash(client: httpx.AsyncClient, page_url: str, *,
     if icon.status_code != 200 or icon.truncated or not icon.body:
         return None
     return icon.url, favicon_mmh3(icon.body)
-
-
-# --- Pivot search adapters -------------------------------------------------------------------------
-@dataclass(frozen=True, slots=True)
-class PivotHit:
-    ip: str
-    port: int | None
-    hostnames: tuple[str, ...]
-    via: str  # "shodan:jarm" | "shodan:favicon" | "urlscan:<query>"
-
-
-class PivotUnavailable(RuntimeError):
-    """Provider refused the query (plan limits, missing key) — not an empty result."""
-
-
-class ShodanPivot:
-    def __init__(self, client: httpx.AsyncClient, api_key: str, base_url: str = "https://api.shodan.io") -> None:
-        self._client, self._key, self._base = client, api_key, base_url.rstrip("/")
-
-    async def _search(self, query: str, via: str, limit: int) -> list[PivotHit]:
-        resp = await self._client.get(f"{self._base}/shodan/host/search", params={"key": self._key, "query": query})
-        if resp.status_code in (401, 403):
-            raise PivotUnavailable(f"shodan refused filter query ({resp.status_code}); a paid plan is required")
-        resp.raise_for_status()
-        return [
-            PivotHit(m.get("ip_str", ""), m.get("port"), tuple(m.get("hostnames") or ()), via)
-            for m in resp.json().get("matches", [])[:limit]
-        ]
-
-    async def by_jarm(self, jarm: str, limit: int = 100) -> list[PivotHit]:
-        return await self._search(f"ssl.jarm:{normalize_jarm(jarm)}", "shodan:jarm", limit)
-
-    async def by_favicon(self, favicon_hash: int, limit: int = 100) -> list[PivotHit]:
-        return await self._search(f"http.favicon.hash:{int(favicon_hash)}", "shodan:favicon", limit)
 
 
 # --- AiTM analysis of a URLScan result -----------------------------------------------------------

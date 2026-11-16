@@ -1,0 +1,347 @@
+{
+  "$defs": {
+    "AccountRef": {
+      "additionalProperties": false,
+      "description": "Pseudonymous exposed account: ref = HMAC(HMAC(secret, \"account-ref/v1\"), lower(account)).",
+      "properties": {
+        "ref": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Ref",
+          "type": "string"
+        },
+        "masked": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Masked",
+          "type": "string"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "maxLength": 253,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Host"
+        }
+      },
+      "required": [
+        "ref",
+        "masked"
+      ],
+      "title": "AccountRef",
+      "type": "object"
+    },
+    "AttackVector": {
+      "enum": [
+        "identity_aitm_infostealer",
+        "edge_device_exploit",
+        "clickfix_fileless",
+        "lots_rmm_tunnel",
+        "byovd_dll_sideload",
+        "supply_chain_seo"
+      ],
+      "title": "AttackVector",
+      "type": "string"
+    },
+    "CompiledQueries": {
+      "additionalProperties": false,
+      "properties": {
+        "wazuh_es_dsl": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "OpenSearch request body for POST <wazuh-alerts-*>/_search",
+          "title": "Wazuh Es Dsl"
+        },
+        "kql_defender": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Retired (D-63): no longer emitted, always null in new packs. Kept so that older packs stay valid; its guardrails still apply.",
+          "title": "Kql Defender"
+        }
+      },
+      "title": "CompiledQueries",
+      "type": "object"
+    },
+    "HuntingTask": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.-]{2,63}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "lookback_days": {
+          "default": 14,
+          "maximum": 90,
+          "minimum": 1,
+          "title": "Lookback Days",
+          "type": "integer"
+        },
+        "sigma_yaml": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "title": "Sigma Yaml",
+          "type": "string"
+        },
+        "compiled_queries": {
+          "$ref": "#/$defs/CompiledQueries"
+        },
+        "target_scope": {
+          "$ref": "#/$defs/TargetScope",
+          "default": "all_endpoints"
+        },
+        "required_telemetry": {
+          "description": "Data sources the query needs (e.g. 'sysmon:13'). Zero hits without them is NOT a clean result.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Telemetry",
+          "type": "array"
+        },
+        "scope_placeholders": {
+          "items": {
+            "$ref": "#/$defs/ScopePlaceholder"
+          },
+          "title": "Scope Placeholders",
+          "type": "array"
+        }
+      },
+      "required": [
+        "task_id",
+        "description",
+        "sigma_yaml",
+        "compiled_queries"
+      ],
+      "title": "HuntingTask",
+      "type": "object"
+    },
+    "PreventionBlocklist": {
+      "additionalProperties": false,
+      "properties": {
+        "ttl_days": {
+          "default": 14,
+          "maximum": 90,
+          "minimum": 1,
+          "title": "Ttl Days",
+          "type": "integer"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5000,
+          "title": "Domains",
+          "type": "array"
+        },
+        "ips": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5000,
+          "title": "Ips",
+          "type": "array"
+        },
+        "hashes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5000,
+          "title": "Hashes",
+          "type": "array"
+        },
+        "jarm_fingerprints": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5000,
+          "title": "Jarm Fingerprints",
+          "type": "array"
+        }
+      },
+      "title": "PreventionBlocklist",
+      "type": "object"
+    },
+    "ScopePlaceholder": {
+      "description": "Tokens a compiled query may contain as ``${HC_<NAME>}``; substituted by the SOAR\nwith values that only exist inside the tenant (e.g. internal IPs of the VPN appliance).",
+      "enum": [
+        "EDGE_DEVICE_INTERNAL_IPS",
+        "DMZ_HOST_IPS",
+        "AFFECTED_UPNS",
+        "AFFECTED_SAM_ACCOUNTS"
+      ],
+      "title": "ScopePlaceholder",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "SoarPlaybookHints": {
+      "additionalProperties": false,
+      "properties": {
+        "auto_block_pre_iocs": {
+          "default": false,
+          "title": "Auto Block Pre Iocs",
+          "type": "boolean"
+        },
+        "notify_only_on_sighting": {
+          "default": true,
+          "title": "Notify Only On Sighting",
+          "type": "boolean"
+        },
+        "suggested_remediation": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Suggested Remediation",
+          "type": "array"
+        }
+      },
+      "title": "SoarPlaybookHints",
+      "type": "object"
+    },
+    "TargetScope": {
+      "description": "Logical host scope. The SOAR resolves it to its own agent groups — HuntCompiler never\nlearns internal hostnames or group names (Zero-Internal-Access).",
+      "enum": [
+        "all_endpoints",
+        "windows_servers",
+        "developer_workstations",
+        "sysadmin_workstations",
+        "edge_adjacent_servers",
+        "identity_plane"
+      ],
+      "title": "TargetScope",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "pack_id": {
+      "format": "uuid",
+      "title": "Pack Id",
+      "type": "string"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "attack_vector": {
+      "$ref": "#/$defs/AttackVector"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "confidence_score": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Confidence Score",
+      "type": "integer"
+    },
+    "mitre_attack": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "title": "Mitre Attack",
+      "type": "array"
+    },
+    "threat_summary": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Threat Summary",
+      "type": "string"
+    },
+    "prevention_blocklist": {
+      "$ref": "#/$defs/PreventionBlocklist"
+    },
+    "internal_hunting_tasks": {
+      "items": {
+        "$ref": "#/$defs/HuntingTask"
+      },
+      "maxItems": 25,
+      "minItems": 1,
+      "title": "Internal Hunting Tasks",
+      "type": "array"
+    },
+    "soar_playbook_hints": {
+      "$ref": "#/$defs/SoarPlaybookHints"
+    },
+    "affected_accounts": {
+      "items": {
+        "$ref": "#/$defs/AccountRef"
+      },
+      "maxItems": 1000,
+      "title": "Affected Accounts",
+      "type": "array"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Derived: timestamp + prevention_blocklist.ttl_days. SOAR drops expired packs.",
+      "title": "Expires At"
+    }
+  },
+  "required": [
+    "attack_vector",
+    "severity",
+    "confidence_score",
+    "mitre_attack",
+    "threat_summary",
+    "internal_hunting_tasks"
+  ],
+  "title": "HuntingPackV2",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://outsight.local/contracts/hunting_pack_v2.schema.json"
+}

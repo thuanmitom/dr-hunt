@@ -1,0 +1,27 @@
+# certstream-server-go (compose profile `certstream`, D-61): a self-hosted, Calidog-compatible CertStream server.
+# The watcher reads the lite stream at ws://certstream-server:8080/ inside the compose network. The port is not
+# published, so the IP whitelist stays empty (every container on the network may connect).
+webserver:
+  listen_addr: "0.0.0.0"
+  listen_port: 8080
+  real_ip: false
+  whitelist: []
+  full_url: "/full-stream"
+  lite_url: "/"
+  domains_only_url: "/domains-only"
+  cert_path: ""
+  cert_key_path: ""
+  compression_enabled: false
+
+prometheus:
+  enabled: false
+
+general:
+  disable_default_logs: false
+  buffer_sizes:
+    websocket: 300
+    ctlog: 1000
+    dispatcher: 10000
+  drop_old_logs: true
+  recovery:
+    enabled: false

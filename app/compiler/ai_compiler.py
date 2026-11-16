@@ -125,8 +125,6 @@ def evaluate_rule(draft: RuleDraft, *, cluster_key: str, allowed_iocs: set[str],
     if verdict.reasons:
         return verdict
     telemetry = [f"sysmon:{draft.category}"]
-    if result.queries.kql_defender:
-        telemetry.append("defender_xdr")
     slug = hashlib.sha256(f"{cluster_key}:{draft.title}".encode()).hexdigest()[:10]
     verdict.task = HuntingTask(
         task_id=f"ai-{draft.category.replace('_', '-')}-{slug}",

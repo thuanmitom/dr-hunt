@@ -2,7 +2,8 @@
 
 One Redis hash per scheduled job, ``hc:health:<name>``, written by the job itself:
 ``state`` (ok | failing | not_configured), ``last_success_at``, ``last_failure_at``, ``last_error`` (exception type
-or a short partial-failure note, never a raw message: messages can carry URLs or keys). Readers derive two more
+or a short partial-failure note, never a raw message: messages can carry URLs or keys), and ``consecutive_failures``
+(reset by a success or a not-configured run; read by the opt-in ops alerts, D-65). Readers derive two more
 states: ``stale`` (no success for more than 2x the job's interval) and ``unknown`` (never ran).
 Redis already runs with AOF; no database table is involved.
 """
@@ -48,6 +49,7 @@ def sources(settings: Settings) -> tuple[Source, ...]:
     return (
         Source("urlscan_sweep", "URLScan", every),
         Source("edge_exploit_sweep", "Edge exploits (KEV/EPSS/GitHub)", every),
+        Source("kev_reenrich", "KEV GitHub retry", 24 * 3600),
         Source("telegram_sweep", "Telegram CTI", every),
         Source("hibp_sweep", "HIBP", 24 * 3600),
         Source("malwarebazaar_sweep", "MalwareBazaar", 2 * 3600),
@@ -56,6 +58,7 @@ def sources(settings: Settings) -> tuple[Source, ...]:
         Source("cluster_events", "Clustering", 5 * 60),
         Source("build_packs", "Pack building", 10 * 60),
         Source("deliver_due", "Push dispatch", 60),
+        Source("retention", "Data retention", 24 * 3600),
     )
 
 
@@ -69,15 +72,17 @@ def record(name: str, outcome: Outcome, note: str | None = None, *, client: Any 
     ts = _iso(now or datetime.now(UTC))
     fields = {"state": outcome.value, "updated_at": ts}
     if outcome is Outcome.OK:
-        fields |= {"last_success_at": ts, "last_error": ""}
+        fields |= {"last_success_at": ts, "last_error": "", "consecutive_failures": "0"}
     elif outcome is Outcome.FAILING:
         fields |= {"last_failure_at": ts, "last_error": (note or "")[:300]}
     else:
-        fields |= {"last_error": (note or "")[:300]}
+        fields |= {"last_error": (note or "")[:300], "consecutive_failures": "0"}
     own = client is None
     c = client or redis.Redis.from_url(get_settings().redis_url, socket_timeout=3)
     try:
         c.hset(KEY.format(name), mapping=fields)
+        if outcome is Outcome.FAILING:  # read by the opt-in ops alerts (D-65)
+            c.hincrby(KEY.format(name), "consecutive_failures", 1)
     except redis.RedisError as exc:
         log.warning("health heartbeat %s not recorded: %s", name, type(exc).__name__)
     finally:

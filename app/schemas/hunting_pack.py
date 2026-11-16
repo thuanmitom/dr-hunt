@@ -89,7 +89,11 @@ class CompiledQueries(_Contract):
     wazuh_es_dsl: dict[str, Any] | None = Field(
         default=None, description="OpenSearch request body for POST <wazuh-alerts-*>/_search"
     )
-    kql_defender: str | None = Field(default=None, description="Microsoft Defender XDR advanced hunting query")
+    kql_defender: str | None = Field(
+        default=None,
+        description="Retired (D-63): no longer emitted, always null in new packs. Kept so that older packs stay valid; "
+        "its guardrails still apply.",
+    )
 
     @field_validator("wazuh_es_dsl")
     @classmethod

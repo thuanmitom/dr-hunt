@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import time
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.ratelimit import RateLimiter, client_ip, get_limiter, too_many
 from app.core.config import get_settings
 from app.core.crypto import sha256_hex
 from app.core.signing import SignatureError, canonical_json, compute_signature, verify_signature
@@ -21,16 +23,37 @@ from app.schemas.feedback import SightingFeedback
 
 router = APIRouter(prefix="/api/v1")
 Session = Annotated[AsyncSession, Depends(get_session)]
+Limiter = Annotated[RateLimiter, Depends(get_limiter)]
+# Verifies feedback for an unknown tenant slug, so that it fails exactly like a wrong signature (no enumeration, D-56).
+_UNKNOWN_TENANT_SECRET = secrets.token_hex(32)
 
 
-async def tenant_from_bearer(session: Session, authorization: Annotated[str | None, Header()] = None) -> Tenant:
+async def _check_ip(request: Request, limiter: RateLimiter) -> None:
+    if retry := await limiter.ip_blocked(client_ip(request)):
+        raise too_many(retry, "too many failed authentications")
+
+
+async def _denied(request: Request, limiter: RateLimiter, detail: str) -> HTTPException:
+    await limiter.auth_failed(client_ip(request))
+    return HTTPException(status.HTTP_401_UNAUTHORIZED, detail)
+
+
+async def _admit(limiter: RateLimiter, tenant: Tenant) -> None:
+    if retry := await limiter.tenant_over_limit(tenant.slug):
+        raise too_many(retry)
+
+
+async def tenant_from_bearer(request: Request, session: Session, limiter: Limiter,
+                             authorization: Annotated[str | None, Header()] = None) -> Tenant:  # fmt: skip
+    await _check_ip(request, limiter)
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+        raise await _denied(request, limiter, "missing bearer token")
     tenant = await session.scalar(
         select(Tenant).where(Tenant.api_token_sha256 == sha256_hex(authorization[7:].strip()), Tenant.is_active)
     )
     if tenant is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
+        raise await _denied(request, limiter, "invalid token")
+    await _admit(limiter, tenant)
     return tenant
 
 
@@ -70,20 +93,26 @@ async def pull_packs(
 async def post_feedback(
     request: Request,
     session: Session,
+    limiter: Limiter,
     x_huntcompiler_tenant: Annotated[str, Header()],
     x_huntcompiler_timestamp: Annotated[str, Header()],
     x_huntcompiler_signature: Annotated[str, Header()],
 ) -> dict[str, str]:
+    await _check_ip(request, limiter)
     body = await request.body()
     tenant = await session.scalar(select(Tenant).where(Tenant.slug == x_huntcompiler_tenant, Tenant.is_active))
-    if tenant is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unknown tenant")
+    # An unknown slug is verified against a random secret: same work, same error as a wrong signature.
+    secret = tenant.webhook_secret if tenant is not None else _UNKNOWN_TENANT_SECRET
     try:
-        verify_signature(tenant.webhook_secret, body, x_huntcompiler_signature, x_huntcompiler_timestamp,
+        verify_signature(secret, body, x_huntcompiler_signature, x_huntcompiler_timestamp,
                          tolerance_seconds=get_settings().signature_tolerance_seconds)  # fmt: skip
-        feedback = SightingFeedback.model_validate_json(body)
     except SignatureError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
+        raise await _denied(request, limiter, str(exc)) from exc
+    if tenant is None:  # unreachable with a random secret; kept as a hard stop
+        raise await _denied(request, limiter, "signature mismatch")
+    await _admit(limiter, tenant)
+    try:
+        feedback = SightingFeedback.model_validate_json(body)
     except ValidationError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid feedback body") from exc
     pack = await session.scalar(

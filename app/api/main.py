@@ -11,14 +11,22 @@ from fastapi import FastAPI, Response, status
 from sqlalchemy import text
 
 from app import __version__
+from app.api.ratelimit import RateLimiter
 from app.api.routes import router
 from app.core.config import get_settings
+from app.core.logging import configure_logging, quiet_noisy_loggers
 from app.db.session import dispose_engine, get_engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.redis = aioredis.from_url(get_settings().redis_url, socket_timeout=3)
+    settings = get_settings()
+    if settings.log_format == "json":  # again, in case the app was imported before uvicorn set up its handlers
+        configure_logging(settings.log_level, settings.log_format)
+    app.state.redis = aioredis.from_url(settings.redis_url, socket_timeout=3)
+    app.state.limiter = RateLimiter(app.state.redis, per_minute=settings.api_rate_limit_per_minute,
+                                    auth_failures=settings.api_auth_failures_per_ip,
+                                    auth_window=settings.api_auth_failure_window_seconds)  # fmt: skip
     try:
         yield
     finally:
@@ -28,6 +36,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # uvicorn installs its handlers before it imports this module, so its own startup lines are JSON too
+    if settings.log_format == "json":
+        configure_logging(settings.log_level, settings.log_format)
+    quiet_noisy_loggers(settings.log_level)
     app = FastAPI(
         title="OutSight HuntCompiler",
         version=__version__,

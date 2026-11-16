@@ -1,0 +1,13 @@
+# Development and CI dependencies. Edit this file, then regenerate the hash-pinned lock:
+#   uv pip compile --generate-hashes --python-version 3.12 --python-platform x86_64-manylinux_2_28 -o requirements-dev.txt requirements-dev.in
+# The runtime lock is the input, so tests and CI run exactly the versions the image ships (D-74).
+-r requirements.txt
+pytest==9.2.0
+pytest-asyncio==1.4.1
+# Integration Kit tests (the kit's own hash-locked list is integration_kit/requirements.txt)
+jsonschema==4.26.0
+pysigma-backend-splunk==2.1.0
+ruff
+uv
+# Known-vulnerability audit of the locks (CI)
+pip-audit

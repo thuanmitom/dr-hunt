@@ -5,4 +5,5 @@ __pycache__/
 .ruff_cache/
 .venv/
 config/*.local.yaml
-.env.example
+# Private owner notes, never published
+docs/private/

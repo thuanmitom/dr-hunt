@@ -90,6 +90,11 @@ class FakeSyncRedis:
     def hset(self, name: str, mapping: dict[str, str]) -> None:
         self.hashes.setdefault(name, {}).update(mapping)
 
+    def hincrby(self, name: str, key: str, amount: int = 1) -> int:
+        h = self.hashes.setdefault(name, {})
+        h[key] = str(int(h.get(key, 0)) + amount)
+        return int(h[key])
+
 
 async def no_sleep(_: float) -> None:
     return None
@@ -99,4 +104,6 @@ def enable_loggers(*names: str) -> None:
     """The integration tests run Alembic, whose fileConfig() disables every logger that already exists. Tests that
     assert on log output re-enable the loggers they read."""
     for name in names:
-        logging.getLogger(name).disabled = False
+        logger = logging.getLogger(name)
+        logger.disabled = False
+        logger.setLevel(logging.NOTSET)  # a CLI test elsewhere may have raised it (e.g. httpx -> WARNING)

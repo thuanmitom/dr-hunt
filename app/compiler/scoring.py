@@ -22,7 +22,9 @@ EXPIRY_FLOOR = 20
 def base_confidence(vector: AttackVector, features: dict[str, Any]) -> int:
     s = 0
     if vector is AttackVector.EDGE_DEVICE_EXPLOIT:
-        s += 50 if features.get("in_kev") else 0
+        # 70, not 50 (D-64): KEV means exploited in the wild, so it reaches the default delivery threshold (60) on its
+        # own and stays above it for about 7 days of decay (half-life 30 d), the length of the KEV lookback window.
+        s += 70 if features.get("in_kev") else 0
         s += 15 if features.get("epss_alert") else 0
         s += 10 if features.get("epss_percentile", 0) >= 0.9 else 0
         s += 10 if features.get("credible_poc") else 0

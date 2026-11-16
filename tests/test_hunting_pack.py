@@ -27,6 +27,14 @@ def test_example_pack_is_valid_and_round_trips(pack_dict):
     pack = HuntingPackV2.model_validate(pack_dict)
     assert pack.schema_version == "2.0"
     assert HuntingPackV2.model_validate(pack.wire_dict()) == pack
+    assert all(t.compiled_queries.kql_defender is None for t in pack.internal_hunting_tasks)  # D-63
+
+
+def test_a_pack_issued_before_d63_with_kql_still_validates(pack_dict):
+    def old_style(d):
+        d["internal_hunting_tasks"][0]["compiled_queries"]["kql_defender"] = "DeviceProcessEvents | take 1"
+
+    HuntingPackV2.model_validate(_mutate(pack_dict, old_style))
 
 
 def test_content_hash_ignores_identity_fields(pack_dict):
@@ -99,8 +107,10 @@ def test_script_in_dsl_rejected(pack_dict):
     ],
 )
 def test_dangerous_kql_rejected(pack_dict, snippet):
+    """New packs carry no KQL (D-63); the retired field keeps its guardrails for packs issued before."""
+
     def inject(d):
-        d["internal_hunting_tasks"][0]["compiled_queries"]["kql_defender"] += snippet
+        d["internal_hunting_tasks"][0]["compiled_queries"]["kql_defender"] = "DeviceProcessEvents | take 1 " + snippet
 
     with pytest.raises(ValidationError):
         HuntingPackV2.model_validate(_mutate(pack_dict, inject))

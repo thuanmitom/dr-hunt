@@ -38,7 +38,7 @@ class IntelSource(StrEnum):
     LOLDRIVERS = "loldrivers"
     HIJACKLIBS = "hijacklibs"
     MALWAREBAZAAR = "malwarebazaar"
-    SHODAN = "shodan"
+    SHODAN = "shodan"  # reserved: the Shodan pivot was removed unused (D-55); enums are append-only
     RSS = "rss"
     MANUAL = "manual"
 
@@ -54,8 +54,8 @@ class EventStatus(StrEnum):
 class ClusterStatus(StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"  # confidence decayed below floor / TTL passed
-    SUPPRESSED = "suppressed"  # analyst-marked false positive
-    MERGED = "merged"  # folded into another cluster (see merged_into_id)
+    SUPPRESSED = "suppressed"  # reserved, not set by any code yet: analyst-marked false positive
+    MERGED = "merged"  # reserved, not set by any code yet: folded into another cluster (see merged_into_id)
 
 
 class DeliveryMode(StrEnum):

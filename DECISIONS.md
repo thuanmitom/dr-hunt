@@ -15,7 +15,7 @@ Each entry: *Context → Decision → Why → Rejected alternatives → Conseque
 ## A. Delivery and contract
 
 ### D-01 Pull is the default delivery mode; push stays optional
-**Status:** Built, unconfirmed (Q2) · Phase 1
+**Status:** Accepted (owner confirmed pull as the main path, 2026-11-05) · Phase 1
 - **Context:** The concept asks for a one-way push to the SOAR webhook and also says HuntCompiler must never connect into the tenant LAN. Push needs an Internet-reachable n8n.
 - **Decision:** The tenant SOAR polls `GET /api/v1/packs?after=<seq>` over an outbound connection. Push (`delivery.mode: push`) is kept for tenants that want it.
 - **Why:** No inbound exposure. It also works for a VMware lab without port forwarding or tunnels. The signing contract is identical in both modes.
@@ -90,7 +90,7 @@ Each entry: *Context → Decision → Why → Rejected alternatives → Conseque
 - **Consequences:** Rotating a tenant secret changes all refs. Consumers need directory lookups to resolve them (Integration Kit).
 
 ### D-10 Telegram CTI reads message text only; no attachments, no stored message text
-**Status:** Built, unconfirmed (legal: Q11) · Phase 2b
+**Status:** Built · Phase 2b · usage scope set by D-73 (Q11, 2026-11-14)
 - **Decision:** Telethon with a StringSession from a dedicated research account. Per-channel cursors in Redis. Only exposures, counts and stealer-family hints are persisted.
 - **Rejected:** downloading log archives (handling stolen data, malware risk); bot accounts (cannot read channels they do not administer).
 
@@ -252,7 +252,7 @@ Each entry: *Context → Decision → Why → Rejected alternatives → Conseque
 
 ### D-33 Auto-block is a hint that requires tenant opt-in
 **Status:** Accepted · Phase 3
-- **Decision:** `auto_block_pre_iocs=true` only if the manifest has `allow_auto_block_hint`, confidence ≥ 80 and the blocklist is non-empty. Enforcement belongs to the SOAR (Q8).
+- **Decision:** `auto_block_pre_iocs=true` only if the manifest has `allow_auto_block_hint`, confidence ≥ 80 and the blocklist is non-empty. Enforcement belongs to the consumer, and only after a human decision (Q8, answered 2026-11-05); the reference consumer never blocks.
 
 ---
 
@@ -284,7 +284,7 @@ Each entry: *Context → Decision → Why → Rejected alternatives → Conseque
 **Status:** Accepted (owner) · 2026-11-01
 - **Decision:**
   - The product is an API for automated TI/TH with AI.
-  - Consumers (Splunk, Wazuh, Elastic, Zabbix…) integrate through pull, push and feedback, using an **Integration Kit** (docs + examples).
+  - Consumers integrate through pull, push and feedback, using an **Integration Kit** (docs + examples) that covers Wazuh, Elastic and Splunk (D-50).
   - HuntCompiler never runs hunts.
 - **Why:** keeps the product focused and vendor-neutral. A reference SOAR would tie it to one stack.
 - **Rejected:** building and maintaining the n8n/Wazuh reference workflow; shipping vendor connectors as code.
@@ -368,14 +368,199 @@ Each entry: *Context → Decision → Why → Rejected alternatives → Conseque
 - **Rejected:** a database table (`TELEGRAM.md` §6 allows only `telegram_digests`); inferring health from `raw_intel_events` (cannot tell an idle source from a broken one).
 - **Consequences:** a Redis flush only loses health history; the digest then reports collectors as not reported yet, never as healthy.
 
+### D-49 Integrators convert the Sigma rule; packs carry no extra query languages
+**Status:** Accepted (owner, IQ1, 2026-11-05) · Phase I
+- **Decision:** Packs keep Sigma, Wazuh DSL and Defender KQL (schema 2.0 unchanged; KQL removed later by D-63). For Elastic and Splunk the consumer substitutes placeholders inside the Sigma rule, then converts it with pySigma (Elastic: `EqlBackend` + ECS pipeline; Splunk: `SplunkBackend` + `sysmon_pipeline` + `splunk_windows_pipeline`).
+- **Why:** no contract change, and the default "no extra query languages in packs" stays. All twelve HuntCompiler templates convert for both platforms (tested).
+- **Rejected:** compiling SPL and ECS queries centrally (more contract fields and backends to maintain, without a harness for those languages); Lucene as Elastic's default (case-sensitive wildcards on keyword fields, the problem D-25 solved for Wazuh).
+- **Consequences:** HuntCompiler's harness does not cover the converted queries; each guide has a live check.
+
+### D-50 Integration Kit scope: Wazuh, Elastic and Splunk
+**Status:** Accepted (owner, IQ2 and IQ3, 2026-11-05) · Phase I
+- **Decision:** Order: the shared reference consumer, then Wazuh, Elastic, Splunk.
+- **Rejected:** Zabbix (it cannot run log hunts); a Microsoft Defender XDR guide (Microsoft's own integrations already cover it). Packs still carry `kql_defender` until the owner decides otherwise (decided: D-63, no more KQL).
+
+### D-51 The reference consumer is standalone, re-validates everything and never acts
+**Status:** Accepted (owner, Q2, Q8 and the dependency question, 2026-11-05) · Phase I
+- **Decision:**
+  - `integration_kit/` never imports `app` and is not copied into the image. Its dependencies are hash-locked in `integration_kit/requirements.txt` (httpx, jsonschema, pySigma and the two backends), separate from the service.
+  - Pull is the main path; a small push receiver (HMAC on the raw body, 1 MB cap) is the alternative. An inbox decouples intake from hunting.
+  - Every pack is re-validated against a byte-identical copy of `contracts/hunting_pack_v2.schema.json` plus the guardrails a schema cannot express, even with a valid signature (ARCHITECTURE.md §9, T4).
+  - `evaluable` requires every task's relevant `required_telemetry` to be declared by the integrator; Defender/Entra tags are ignored; `sysmon:<category>` counts as the matching event id. A task above `HC_KIT_MAX_HITS` is a broken rule.
+  - `auto_block_pre_iocs` is reported as a hint only; the consumer never blocks.
+- **Rejected:** importing HuntCompiler code in the kit (integrators would need the whole service); trusting the signature alone; counting a huge hit volume as a sighting.
+
+### D-52 KEV-to-tech-tag matching needs a product-specific word
+**Status:** Accepted (owner, 2026-11-05) · bug fix
+- **Context:** the shared word "server" made "Exchange Server" match `microsoft:windows_server` and "SharePoint Server" match both Exchange and Windows Server, so V2 packs reached tenants that do not run the product.
+- **Decision:** generic product words (server, services, enterprise, software, management...) never match on their own; a tag made only of generic words never matches.
+- **Rejected:** exact product-name equality (KEV product names vary: "FortiOS and FortiProxy").
+
+### D-53 Wazuh DSL matches the doubled backslashes Wazuh stores
+**Status:** Accepted (owner, 2026-11-08) · bug fix found on Wazuh indexer 4.14.7
+- **Context:** Wazuh 4.x's eventchannel decoder stores every backslash of a Windows event value doubled (`C:\\Windows\\...`); Wazuh's own ruleset matches paths that way. Our DSL used single backslashes. On the official Wazuh indexer 4.14.7 (OpenSearch 2.19.5) this gave two false positives (the `System32\drivers\` filters of the V5 driver tasks never applied) and one missed detection (`Windows\Temp\` in the HijackLibs task); the V3 `RunMRU` registry path could never match. Single-segment patterns such as `*\powershell.exe` matched by chance, and the harness built its sample documents with single backslashes, so the tests did not see it.
+- **Decision:** the Wazuh DSL emitter doubles every literal backslash in `term` and `wildcard` values. The harness stores `data.win.eventdata.*` sample values the Wazuh way, so AI-draft samples and templates are checked against what the indexer holds. Splunk, Elastic and KQL output is unchanged.
+- **Rejected:** rewriting queries in the consumer (the DSL in the pack must be correct as shipped; other consumers run it directly); `regexp` queries accepting one or two backslashes (slower on keyword fields, and the harness would need a regex engine for them); asking integrators to change the decoder (not configurable).
+- **Consequences:** packs with Windows paths change content and are re-issued once at the next build. Placeholder values with a backslash must be doubled by the integrator (`integration_kit/wazuh/GUIDE.md` §3). Wazuh 5.x is not covered.
+
+### D-54 GitHub only enriches a KEV signal
+**Status:** Accepted (owner, Phase H plan, 2026-11-08) · bug fix
+- **Context:** without a token GitHub code search answers 401, and any GitHub error (rate limit, outage) aborted the whole KEV sweep, so the V2 alert itself was lost, not just the PoC details.
+- **Decision:** PoC search and Nuclei lookup run per CVE inside their own error handling. A failure leaves `pocs`/`nuclei_templates` empty, adds a reason to `enrichment_notes`, and marks the sweep "failing" with that reason on the health page; the KEV signal still ships. Without a token the code search is skipped (it always fails) and that is noted, not reported as a failure.
+- **Rejected:** retrying the CVE on the next run (a missing token would block the alert forever); a mandatory token (one missing setting must not silence V2).
+- **Consequences:** signals are deduplicated on the CVE, so a CVE first seen while GitHub was unavailable keeps its empty enrichment. Without PoC/Nuclei points (+10 each) a KEV with low EPSS may stay under a tenant's delivery threshold: the token is still recommended.
+
+### D-55 The unused Shodan pivot is removed
+**Status:** Accepted (owner, Phase H plan, 2026-11-08)
+- **Decision:** `ShodanPivot`, `PivotHit`, `PivotUnavailable` and the `HC_SHODAN_*` settings are deleted; nothing ever called them. `IntelSource.SHODAN` and the cluster states `merged`/`suppressed` stay (enums are append-only) and are marked reserved.
+- **Rejected:** keeping dead code and a setting that does nothing.
+
+### D-56 Tenant API rate limits; authentication failures look the same for every tenant
+**Status:** Accepted (owner, Phase H plan, 2026-11-08)
+- **Decision:** fixed windows in the existing Redis, no new dependency (`app/api/ratelimit.py`): `HC_API_RATE_LIMIT_PER_MINUTE` calls per tenant (default 60), and after `HC_API_AUTH_FAILURES_PER_IP` failed authentications in `HC_API_AUTH_FAILURE_WINDOW_SECONDS` (20 in 600 s) an IP gets 429 with `Retry-After` for the rest of the window, even with a valid credential. Feedback for an unknown tenant slug is verified against a random secret, so it costs the same work and returns the same error as a wrong signature. If Redis fails, the API stays available (fail open, logged, 30 s back-off).
+- **Rejected:** an extra rate-limit library or a gateway product (more moving parts for two endpoints); fail closed (a Redis blip would cut every tenant off).
+- **Consequences:** per-IP limits need the real client IP: behind Caddy, uvicorn's `--proxy-headers` reads `X-Forwarded-For`.
+
+### D-57 Data retention
+**Status:** Accepted (owner, Phase H plan, 2026-11-08)
+- **Decision:** a daily job (`maintenance.retention`, 02:45 UTC, reported on the health page) deletes `raw_intel_events` older than 90 days unless they belong to a still-active cluster, and `ai_compilations` older than 180 days. `0` keeps a table forever. Packs, clusters, tenants, datasets and digests are never purged.
+- **Rejected:** partitioning (not needed at this volume); deleting by `observed_at` (a late-ingested old event would vanish at once).
+- **Consequences:** the AI audit trail covers the last 180 days (`docs/AI_RISK_ASSESSMENT.md`). An event older than the window can be stored again if a source re-sends it.
+
+### D-58 JSON logs; no metrics endpoint yet
+**Status:** Accepted (owner, Phase H plan, 2026-11-08)
+- **Decision:** `HC_LOG_FORMAT=json` writes one JSON object per line from the API, worker, beat, CertStream watcher and bot (stdlib only). Logger filters run first, so the Telegram token scrubber still applies. Text stays the default.
+- **Rejected for now:** a Prometheus `/metrics` endpoint (a new dependency and one more endpoint to protect; collector health is already on `/status`).
+
+### D-59 Public HTTPS through Caddy; images pinned by digest
+**Status:** Accepted (owner, Phase H plan, 2026-11-08)
+- **Decision:** compose profile `edge` runs Caddy with automatic certificates for `HC_PUBLIC_HOSTNAME`, exposing only `/api/v1/*` and `/healthz` (1 MB body limit, HSTS). The API itself stays on 127.0.0.1. Every image (`python`, `postgres`, `redis`, `caddy`, `certstream-server-go`) is pinned by digest.
+- **Rejected:** nginx with certbot (two services and renewal scripts); publishing uvicorn directly.
+- **Checked:** 2026-11-09 with `localhost` and Caddy's local CA (TLS 1.3, routing, signed pull, per-IP lockout on the
+  forwarded client IP). A public hostname is still to check.
+
+### D-60 Backups with pg_dump
+**Status:** Accepted (owner, Phase H plan, 2026-11-08)
+- **Decision:** compose profile `backup` runs `deploy/backup.sh` in the pinned postgres image: one custom-format `pg_dump` per day into the `pg_backups` volume, newest 14 kept (`HC_BACKUP_KEEP`). Restore steps are in README.md "Backups".
+- **Rejected:** WAL archiving and point-in-time recovery (more operations than this data needs; a day of loss is acceptable because intelligence is re-collected).
+- **Consequences:** the volume sits on the same host; copy dumps off the host for disaster recovery.
+- **Verified:** 2026-11-09: rotation kept the newest two of three dumps; a dropped table came back with the README steps.
+
+### D-61 Self-hosted CertStream
+**Status:** Accepted (owner, Phase H plan, 2026-11-08)
+- **Decision:** compose profile `certstream` runs `certstream-server-go` v1.10.1 (Calidog-compatible lite stream at `/`), reachable only inside the compose network; the watcher uses it when `HC_CERTSTREAM_URL=ws://certstream-server:8080/`.
+- **Rejected:** staying on the public endpoint (it delivered nothing, 2026-11-05).
+- **Verified:** 2026-11-09: the real watcher received certificates within seconds; heartbeat every minute.
+
+### D-62 A blank setting means "not set"
+**Status:** Accepted (owner, Phase H plan, 2026-11-08) · bug fix
+- **Context:** `.env.example` ships `HC_URLSCAN_API_KEY=` blank. pydantic-settings read that as an empty secret, not as missing, so the URLScan sweep called the API with an empty key every 30 minutes (403) instead of reporting `not_configured`. Every optional key had the same problem.
+- **Decision:** `env_ignore_empty=True`: a blank variable, in the environment or in `.env`, falls back to the default.
+
+### D-63 Packs carry no Defender KQL
+**Status:** Accepted (owner, 2026-11-10) · supersedes the KQL part of D-27, D-28 and D-49
+- **Context:** Microsoft Defender XDR is out of scope (D-50) and no supported integration runs KQL. The owner asked to remove it completely.
+- **Decision:** the compiler emits the Wazuh DSL only; templates and AI tasks no longer produce KQL or declare the Defender/Entra telemetry tags; the Telegram `/pack` query file shows the DSL only; `pysigma-backend-kusto` is removed from the dependencies. `CompiledQueries.kql_defender` stays in the schema (optional, always null in new packs) and keeps its guardrails.
+- **Rejected:** deleting the field from the schema (contract changes are additive only, and packs issued before D-63 would stop validating); forbidding it in the schema (same reason).
+- **Consequences:** every pack's content changes once, so the next pack build re-issues them. The V1 exposure task loses its Entra sign-in check (it existed only in KQL) and keeps the on-prem 4625 check; `${HC_AFFECTED_UPNS}` is no longer used by any template (the enum value stays). Entra hunting for consumers without Defender is part of Q6.
+
+### D-64 A KEV entry alone reaches the delivery threshold
+**Status:** Accepted (owner, Phase Q plan item Q1, 2026-11-13) · supersedes the KEV weight in D-32
+- **Context:** "in KEV" was worth 50 points and the default delivery threshold is 60. A fresh KEV entry usually has a low EPSS and no PoC yet, so a vulnerability CISA confirms as exploited in the wild was not delivered. The KEV event is dated 00:00 UTC of `dateAdded`, so the score starts decaying before HuntCompiler even sees it: 60 would fall to 59 within about 9 hours.
+- **Decision:** "in KEV" is worth **70**. With the 30-day half-life a KEV-only cluster stays at or above 60 for about 7 days, the length of the KEV lookback window, and its severity is HIGH. EPSS, PoC, Nuclei and ransomware points still add on top (capped at 100).
+- **Rejected:** a special delivery rule for KEV regardless of the threshold (an exception inside the pack builder); a per-vector threshold in the manifest (a contract change every tenant would have to tune).
+- **Consequences:** more V2 packs, by design. Only tenants whose tech tags match receive them. Clusters scored before the change keep their stored base score.
+
+### D-65 Opt-in ops alerts in Telegram
+**Status:** Accepted (owner, Phase Q plan item Q5, 2026-11-13) · narrows the "digest only" rule of D-39 to intelligence
+- **Decision:** with `HC_TGBOT_OPS_ALERTS=true` (default **false**), a job that failed `HC_TGBOT_OPS_ALERT_AFTER_FAILURES` runs in a row (3), or is stale, is announced once per `HC_TGBOT_OPS_ALERT_COOLDOWN_HOURS` (6), with a "recovered" message when it is ok again. The messages carry no intelligence: job label, state and the short heartbeat note, HTML-escaped. Heartbeats gain a `consecutive_failures` counter. The task `notify.ops_alerts` runs every 5 minutes, only when enabled.
+- **Rejected:** instant intelligence alerts (TQ2 stays "no"); alerts on `unknown` or `not_configured` (a missing key is a setting, not an outage).
+
+### D-66 Forwarded client IPs are trusted from Caddy only
+**Status:** Accepted (owner, Phase Q plan item Q6, 2026-11-13)
+- **Context:** uvicorn ran with `--forwarded-allow-ips "*"`, so any process able to reach port 8000 could set `X-Forwarded-For` and dodge the per-IP lockout of D-56.
+- **Decision:** an internal network `edge` (`HC_EDGE_SUBNET`, default `172.31.250.0/28`) links Caddy and the API. Docker hands out dynamic addresses only from `HC_EDGE_IP_RANGE` (default `172.31.250.8/29`). Caddy has a fixed address outside that range (`HC_EDGE_CADDY_IP`, default `172.31.250.2`) and reaches the API through the alias `api-edge`; uvicorn trusts forwarded headers from that address only. Direct calls on `127.0.0.1:8000` are identified by their real peer address.
+- **Rejected:** trusting a whole Docker subnet (other containers live there); a shared-secret header added by Caddy (uvicorn's proxy middleware cannot check it).
+- **Consequences:** if `172.31.250.0/28` clashes with another Docker network, change the three settings together. The live check (2026-11-13) found that without `ip_range` the API, which starts before Caddy, takes Caddy's address and Caddy cannot start; hence the range.
+
+### D-67 Audience and deployment: self-hosted, for individuals, research and small businesses
+**Status:** Accepted (owner, Q1 and Q3, 2026-11-14)
+- **Decision:** HuntCompiler is for personal use, research, or small businesses. It runs **on the user's or the business's own machine** (one Docker Compose stack per installation), not as a shared hosted service. The multi-tenant data model stays; a normal installation has one tenant.
+- **Consequences:**
+  - Zero-Internal-Access is unchanged: even on the user's machine, HuntCompiler only reads public intelligence and serves packs; it never connects to the user's internal systems.
+  - Consumers reach the API on the same machine or the LAN. A public hostname with Let's Encrypt is optional, not a requirement; LAN HTTPS uses Caddy's internal CA (checked 2026-11-09).
+  - Follow-ups (local-only HTTPS mode, loopback HTTP for a consumer on the same machine, hardware sizing) are planned in `docs/plans/KE_HOACH_PHASE_R.md`.
+- **Rejected:** a hosted multi-tenant SaaS (legal review, data custody and operations beyond the target users).
+
+### D-68 AI provider: paid Gemini
+**Status:** Accepted (owner, Q12, 2026-11-14)
+- **Decision:** the AI compiler uses a paid Gemini API key. The default stays "LLM off": each installation enables it with `HC_LLM_ENABLED=true`, `HC_GEMINI_API_KEY` and a daily token budget.
+- **Consequences:** the model names in `.env.example` must be checked against Google's current list before the first live run; the Phase 3 live check (one Gemini run reviewed by a human) waits for a key.
+- **Rejected:** a local model (hardware cost on small machines, weaker output).
+
+### D-69 Entra sign-in hunting: documentation only
+**Status:** Accepted (owner, Q6, 2026-11-14)
+- **Decision:** `integration_kit/ENTRA_GUIDE.md` explains how an integrator can check exposed accounts against Entra ID sign-in logs on Wazuh, Elastic or Splunk, with example queries. Nothing is added to packs, templates or tests; the examples are not run.
+- **Rejected:** a Sigma template for Entra logs (it would break the Windows-only default and need per-platform field mappings and live tests).
+
+### D-70 KEV entries are classified: edge products get packs, OS and desktop software get a patch reminder
+**Status:** Accepted (owner, Phase R plan item R1, option A, 2026-11-14) · narrows D-64
+- **Context:** every KEV entry that matched a tenant tag became a V2 "edge device exploit" pack with the edge lateral-movement hunts (logons and admin connections from the appliance's inside IP). A Windows or browser CVE got hunts that do not fit it, and the tag `microsoft:windows_server` matches several "Microsoft Windows" KEV entries every month, so tenants received many low-value packs.
+- **Decision:** `classify_kev(vendorProject, product)` in `app/collectors/edge_exploits.py` sorts each entry, by a code-held table, into `edge` (VPN, firewall, gateway, load balancer, internet-facing servers such as Exchange, SharePoint, IIS, vCenter, Tomcat, file-transfer products) or `endpoint` (everything else, unknown products included). The result is the cluster feature `kev_class`.
+  - `edge`: unchanged V2 pack with the edge hunts.
+  - `endpoint`: no edge hunts. Without other tasks (AI tasks, IOC sightings) there is no pack; the CVE is listed instead in a new digest section "Exploited CVEs to patch" for the matching tenants that got no pack.
+  - A tenant that lists the matched product in `login_portals[].product` gets the edge hunts anyway (an RD Web or other portal on that product faces the Internet).
+  - Clusters built before this change have no `kev_class` and keep the old behaviour.
+- **Rejected:** a new attack vector for endpoint vulnerabilities with its own templates (much larger, and there is no good generic hunt for that class yet); keeping everything and only rewording (does not remove the noise); asking the LLM to classify (the table must be deterministic and reviewable).
+- **Consequences:** fewer V2 packs. The score is unchanged (D-64), so an endpoint KEV entry still counts toward the threshold when AI tasks make a pack. The vendor and product table needs occasional review when KEV adds new edge vendors. The live run on 2026-11-15 checked it against the whole catalog (1,781 entries: 651 edge, 1,130 endpoint) and found that CISA now lists VMware products under "Broadcom" and that several internet-facing products (Cisco Secure Email Gateway and SD-WAN, BeyondTrust Remote Support, GoAnywhere, ScreenConnect, IBM Aspera) fell to `endpoint`; the table was extended and each case has a test.
+
+### D-71 Daily retry of GitHub enrichment for KEV entries
+**Status:** Accepted (owner, Phase R plan item R4 = Phase Q item Q4, 2026-11-14)
+- **Context:** a KEV entry is stored once (deduplicated by CVE). When GitHub failed on that first run, or no token was set, the entry kept empty PoC and Nuclei data, and the 10 + 10 points they can add, for good.
+- **Decision:** the task `collectors.kev_reenrich` runs daily at 04:15 UTC. It retries KEV events inside the lookback window (`HC_KEV_LOOKBACK_DAYS`) whose `enrichment_notes` show missing data, at most `HC_KEV_REENRICH_MAX_ATTEMPTS` (5) runs each and 50 events per run. A missing token alone is retried only once a token is set, so the code search is never called without one. A part that fails again keeps the data stored earlier. The event payload, the cluster's `credible_poc` and `nuclei_template` features and its base score are updated; GitHub calls happen outside database transactions. Failures show on the health page (`kev_reenrich`).
+- **Rejected:** re-collecting the whole KEV window with GitHub calls every run (rate limits without a token); retrying entries without notes to catch PoCs published later (unbounded GitHub traffic; can be added later with its own cap).
+- **Consequences:** a cluster that was below a tenant's threshold gets its pack at the next pack build. A pack already sent is not re-issued for a score change alone (substance rule).
+
+### D-72 Local deployment: HTTPS from Caddy's internal CA, loopback HTTP for a consumer on the same machine
+**Status:** Accepted (owner, Phase R plan items R5.1, R5.2 and R5.4, 2026-11-14) · follows D-67
+- **Decision:**
+  - `HC_TLS_MODE=internal` makes Caddy (profile `edge`) issue the certificate from its own local CA, for a LAN without a public name; `HC_PUBLIC_HOSTNAME` is then the LAN name or IP consumers use, and they trust Caddy's root certificate (`docs/INSTALL.md`). `public` (default) keeps Let's Encrypt. Any other value stops Caddy at startup.
+  - The reference consumer accepts `http://` without `HC_KIT_ALLOW_HTTP` only when the host is `localhost` or a loopback address literal (`127.0.0.0/8`, `::1`). LAN addresses, other names, lookalike names and URLs with user info still need HTTPS.
+  - The Phase H live check "HTTPS with a public hostname" becomes optional.
+- **Rejected:** plain HTTP inside the LAN (tokens and packs on the wire); a self-signed certificate made by hand (no renewal, and every consumer would have to pin it anyway).
+- **Consequences:** loopback HTTP never leaves the machine, so the kit's guardrail is narrowed, not dropped. Consumers on other LAN machines install Caddy's root certificate or point `HC_KIT_CA_BUNDLE` at it.
+
+### D-73 Telegram CTI and HIBP: public channels only, own verified domains only
+**Status:** Accepted (owner, Q11 proposal in `docs/plans/KE_HOACH_PHASE_R.md` §2, 2026-11-14). A technical and operational policy, not legal advice.
+- **Decision:**
+  - Telegram CTI monitors **public** channels and groups only (visible to anyone, no invitation, approval or payment). It never joins closed or vetted groups, never posts, buys or talks to anyone there, never downloads attachments (blocked in code) and never uses credentials it finds.
+  - It runs on a separate research account (own SIM), not a personal account. The channel list is kept in an uncommitted internal file with the reason and the date each channel was added, and reviewed every quarter. Start with 3 to 5 channels and assess them for two weeks.
+  - HIBP is used only for domains the user or the business owns and administers, each verified in the HIBP dashboard (DNS TXT recommended), with a paid API key. The domains go into `brand.email_domains`.
+- **Consequences:** both collectors stay off until configured. The data handling already in place (passwords dropped at once, accounts kept as HMAC references plus a masked form, no message text stored) is the data-minimisation basis. Businesses should still ask their legal adviser before enabling either collector.
+- **Rejected:** monitoring closed groups or paid leak markets (legal and ethical exposure, and it means dealing with criminals).
+
+### D-74 Continuous integration with GitHub Actions
+**Status:** Accepted (owner, Phase R plan item R3 = Phase Q item Q2, 2026-11-14)
+- **Decision:** `.github/workflows/ci.yml` runs on push to `main` and on pull requests: ruff, the full test suite with a PostgreSQL 16 service, `alembic upgrade head && alembic check`, contract regeneration with a diff check, the Integration Kit's schema copy, and `pip-audit` on the dev lock and the kit lock. Actions are pinned by commit SHA and the PostgreSQL image by digest; the job has a read-only token and no secrets. `requirements-dev.in` takes the runtime lock as its input and `requirements-dev.txt` is now hash-locked with uv, so CI tests the exact versions the image ships.
+- **Rejected:** another CI service (the code is on GitHub); actions pinned by tag (tags can move); auditing only the runtime lock (the dev tools also run code).
+- **Consequences:** CI starts only once the owner commits and pushes. A new advisory against a pinned package fails the build until the lock is updated.
+- **Accepted advisory (owner, 2026-11-15):** PYSEC-2026-2447 (CVE-2025-69872): `diskcache` up to 5.6.3 unpickles its cache files, so whoever can write the cache directory can run code. No fixed release exists. `diskcache` comes with pySigma, which uses it only to cache MITRE ATT&CK and D3FEND data; HuntCompiler never loads that data (the full test suite creates no cache directory), and in the image the directory would belong to the service user. CI ignores this one ID, nothing else; remove the exception once a fixed version is locked. Rejected: a red CI until upstream ships a fix (it would hide new findings); removing pySigma (it compiles every rule).
+
+### D-75 The worker loads the MISP warninglists once, before forking
+**Status:** Accepted (owner, 2026-11-15, after the Phase R resource measurement)
+- **Context:** the whitelist reads the MISP warninglists (about 300 MiB in memory). Each of the worker's 4 task processes loaded its own copy on first use, so the worker needed about 1.5 GiB of the stack's 1.8 GiB. Self-hosted installations run on small machines (D-67).
+- **Decision:** a `worker_init` handler in `app/worker/celery_app.py` loads the lists in the worker's main process before the pool forks, then calls `gc.freeze()` so the garbage collector does not touch (and so copy) the shared objects. If loading fails, the worker starts anyway and each task process loads the lists itself as before.
+- **Measured (2026-11-15):** the worker uses about 550 MiB after 16 task runs across its processes and about 650 MiB (peak 690 MiB) after a dataset sync (before: 1.49 GiB); each process's own share (PSS) is about 110 MiB.
+- **Rejected:** fewer task processes (slower sweeps for the same saving); loading only some warninglists (changes whitelist behaviour, needs its own review).
+
 ## Open questions referenced above
 
 **General**
-- **Q2** — Confirm pull as the default for integrators.
+- **Q2** — Confirm pull as the default for integrators. *Answered 2026-11-05: yes, with a push example (D-51).*
 - **Q7** — Are Linux and edge-server hunts in scope?
-- **Q8** — What should `auto_block_pre_iocs` mean for integrators?
-- **Q11** — Which Telegram CTI channels may legally be monitored; research account; HIBP domain verification?
-- **Q12** — Paid Gemini key or a local model?
+- **Q8** — What should `auto_block_pre_iocs` mean for integrators? *Answered 2026-11-05: a hint only (D-51).*
+- **Q11** — Which Telegram CTI channels may legally be monitored; research account; HIBP domain verification? *Answered 2026-11-14: public channels only, a separate research account, own verified domains only (D-73).*
+- **Q12** — Paid Gemini key or a local model? *Answered 2026-11-14: paid Gemini (D-68).*
 - **Q13** — Do additive fields stay in `2.0`, or bump to `2.1`?
 
 **Telegram**
@@ -385,6 +570,6 @@ Each entry: *Context → Decision → Why → Rejected alternatives → Conseque
 - **TQ4** — Bot language. *Answered 2026-11-02: English.*
 
 **Integration Kit**
-- **IQ1** — More query languages in packs, or Sigma conversion by integrators?
-- **IQ2** — What the Zabbix integration should do.
-- **IQ3** — Platform order.
+- **IQ1** — More query languages in packs, or Sigma conversion by integrators? *Answered: conversion (D-49).*
+- **IQ2** — What the Zabbix integration should do. *Answered: out of scope (D-50).*
+- **IQ3** — Platform order. *Answered: Wazuh, Elastic, Splunk (D-50).*

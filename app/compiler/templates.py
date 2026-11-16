@@ -31,9 +31,9 @@ def _rule(title: str, logsource: dict[str, str], detection: dict[str, Any], tags
 
 
 def _task(task_id: str, description: str, sigma_yaml: str, lookback: int, telemetry: list[str],
-          scope: TargetScope = TargetScope.ALL_ENDPOINTS, kql: str | None = None,
+          scope: TargetScope = TargetScope.ALL_ENDPOINTS,
           placeholders: list[ScopePlaceholder] | None = None) -> HuntingTask:  # fmt: skip
-    result = translate(sigma_yaml, kql_override=kql)
+    result = translate(sigma_yaml)
     if result.queries is None:
         raise RuntimeError(f"template {task_id} failed to compile: {result.issues}")
     return HuntingTask(task_id=task_id, description=description, lookback_days=lookback, sigma_yaml=sigma_yaml,
@@ -103,21 +103,19 @@ def edge_lateral_movement_tasks(lookback: int) -> list[HuntingTask]:
         _task("v2-edge-network-logon", "Network logons (4624 type 3) originating from the edge appliance's inside IP.",
               _rule("Network logon from edge appliance", {"product": "windows", "service": "security"}, logon, tags),
               lookback, ["windows_security:4624"], TargetScope.EDGE_ADJACENT_SERVERS,
-              kql=f'DeviceLogonEvents\n| where LogonType == "Network" and RemoteIP in ({ph})',
               placeholders=[ScopePlaceholder.EDGE_DEVICE_INTERNAL_IPS]),
         _task("v2-edge-inbound-admin-ports", "SMB/RDP/WinRM/LDAP connections accepted from the edge appliance.",
               _rule("Admin-port connection from edge appliance",
                     {"product": "windows", "category": "network_connection"}, inbound, tags),
               lookback, ["sysmon:3"], TargetScope.EDGE_ADJACENT_SERVERS,
-              kql=("DeviceNetworkEvents\n| where ActionType == \"InboundConnectionAccepted\" and RemoteIP in "
-                   f"({ph}) and LocalPort in ({', '.join(map(str, EDGE_PORTS))})"),
               placeholders=[ScopePlaceholder.EDGE_DEVICE_INTERNAL_IPS]),
     ]  # fmt: skip
 
 
 def baseline_tasks(vector: AttackVector, observables: dict, lookback: int,
-                   ref: dict[str, list[dict]] | None = None) -> list[HuntingTask]:  # fmt: skip
-    """Tasks shared by every tenant receiving this cluster."""
+                   ref: dict[str, list[dict]] | None = None, *, edge_hunts: bool = True) -> list[HuntingTask]:  # fmt: skip
+    """Tasks shared by every tenant receiving this cluster. ``edge_hunts=False`` leaves out the V2 edge-appliance
+    hunts; the pack builder adds them per tenant (D-70)."""
     ref = ref or {}
     domains = observables.get("domains_block", []) + observables.get("domains_hunt", [])
     ips = observables.get("ips_block", []) + observables.get("ips_hunt", [])
@@ -126,7 +124,7 @@ def baseline_tasks(vector: AttackVector, observables: dict, lookback: int,
     )
     if vector is AttackVector.CLICKFIX_FILELESS:
         tasks += safe(clickfix_tasks, lookback)
-    elif vector is AttackVector.EDGE_DEVICE_EXPLOIT:
+    elif vector is AttackVector.EDGE_DEVICE_EXPLOIT and edge_hunts:
         tasks += safe(edge_lateral_movement_tasks, lookback)
     elif vector is AttackVector.LOTS_RMM_TUNNEL:
         tasks += safe(tunnel_and_bot_tasks, lookback)
@@ -167,10 +165,6 @@ INSTALL_VERBS = ["pip install", "pip3 install", "npm install", "npm i ", "yarn a
 CAP_HASHES, CAP_NAMES = 150, 200
 
 
-def _kql_list(values: list[str]) -> str:
-    return ", ".join('"' + v.replace("\\", "\\\\").replace('"', "") + '"' for v in values)
-
-
 def hash_sighting_tasks(hashes: list[str], lookback: int) -> list[HuntingTask]:
     hashes = sorted(set(hashes))[:CAP_HASHES]
     if not hashes:
@@ -178,27 +172,19 @@ def hash_sighting_tasks(hashes: list[str], lookback: int) -> list[HuntingTask]:
     det = {"sel": {"Hashes|contains": [f"SHA256={h}" for h in hashes]}, "condition": "sel"}
     return [_task("ioc-hash-execution", "Execution of known-bad files by SHA256 (Sysmon 1 with SHA256 hashing).",
                   _rule("Known-bad file executed", {"product": "windows", "category": "process_creation"}, det,
-                        ["attack.execution"]), lookback, ["sysmon:1"],
-                  kql=f"DeviceProcessEvents\n| where SHA256 in~ ({_kql_list(hashes)})")]  # fmt: skip
+                        ["attack.execution"]), lookback, ["sysmon:1"])]  # fmt: skip
 
 
 def credential_exposure_tasks(lookback: int) -> list[HuntingTask]:
-    upn = "${HC_" + ScopePlaceholder.AFFECTED_UPNS.value + "}"
+    """On-prem failed logons (4625) for the exposed accounts. The Entra sign-in check was KQL-only and left with D-63."""
     sam = "${HC_" + ScopePlaceholder.AFFECTED_SAM_ACCOUNTS.value + "}"
     det = {"sel": {"EventID": 4625, "TargetUserName": sam}, "condition": "sel"}
-    kql = (
-        "EntraIdSignInEvents\n| where AccountUpn in~ ("
-        + upn
-        + ") and ErrorCode in (50126, 50053, 50074, 50076, 500121)"
-        "\n| summarize Attempts = count(), IPs = make_set(IPAddress, 20), Countries = make_set(Country, 10) by AccountUpn"
-    )
     return [_task("v1-exposed-account-failed-logons",
-                  "Failed logons for exposed accounts (4625 on-prem; Entra password/MFA failures) — signs the leaked "
-                  "credential is being tried.",
+                  "Failed on-prem logons (4625) for exposed accounts — signs the leaked credential is being tried.",
                   _rule("Failed logon for exposed account", {"product": "windows", "service": "security"}, det,
                         ["attack.credential-access", "attack.t1078"]),
-                  lookback, ["windows_security:4625", "entra_signin"], TargetScope.IDENTITY_PLANE, kql=kql,
-                  placeholders=[ScopePlaceholder.AFFECTED_UPNS, ScopePlaceholder.AFFECTED_SAM_ACCOUNTS])]  # fmt: skip
+                  lookback, ["windows_security:4625"], TargetScope.IDENTITY_PLANE,
+                  placeholders=[ScopePlaceholder.AFFECTED_SAM_ACCOUNTS])]  # fmt: skip
 
 
 def tunnel_and_bot_tasks(lookback: int) -> list[HuntingTask]:
@@ -208,17 +194,13 @@ def tunnel_and_bot_tasks(lookback: int) -> list[HuntingTask]:
         "sel_dst": {"QueryName": ["api.telegram.org", "discord.com", "discordapp.com"]},
         "condition": "sel_img and sel_dst",
     }
-    names = _kql_list([s.lstrip("\\") for s in SCRIPT_HOSTS])
     return [
         _task("v4-tunnel-dns", "DNS lookups of ad-hoc tunnel services (Cloudflare quick tunnels, Dev Tunnels, ngrok...).",
               _rule("Shadow tunnel service resolved", {"product": "windows", "category": "dns_query"}, tunnels,
-                    ["attack.command-and-control", "attack.t1572"]), lookback, ["sysmon:22"],
-              kql=f"DeviceNetworkEvents\n| where RemoteUrl has_any ({_kql_list(TUNNEL_DOMAINS)})"),
+                    ["attack.command-and-control", "attack.t1572"]), lookback, ["sysmon:22"]),
         _task("v4-script-host-bot-api", "Script hosts/LOLBins resolving Telegram or Discord APIs (exfiltration / C2).",
               _rule("Script host contacting bot API", {"product": "windows", "category": "dns_query"}, bots,
-                    ["attack.exfiltration", "attack.t1567"]), lookback, ["sysmon:22"],
-              kql=("DeviceNetworkEvents\n| where RemoteUrl has_any (\"api.telegram.org\", \"discord.com\") and "
-                   f"InitiatingProcessFileName in~ ({names})")),
+                    ["attack.exfiltration", "attack.t1567"]), lookback, ["sysmon:22"]),
     ]  # fmt: skip
 
 
@@ -234,15 +216,12 @@ def rogue_rmm_tasks(lolrmm: list[dict], approved: list[str], lookback: int) -> l
         det = {"sel": {"Image|endswith": ["\\" + f for f in files]}, "condition": "sel"}
         tasks.append(_task("v4-unapproved-rmm-process", f"Execution of RMM tools not approved for this tenant ({len(files)} binaries).",
                            _rule("Unapproved RMM tool executed", {"product": "windows", "category": "process_creation"},
-                                 det, ["attack.command-and-control", "attack.t1219"]), lookback, ["sysmon:1"],
-                           kql=(f"DeviceProcessEvents\n| where FileName in~ ({_kql_list(files)}) or "
-                                f"ProcessVersionInfoOriginalFileName in~ ({_kql_list(files)})")))  # fmt: skip
+                                 det, ["attack.command-and-control", "attack.t1219"]), lookback, ["sysmon:1"]))  # fmt: skip
     if domains:
         det = {"sel": {"QueryName|endswith": domains}, "condition": "sel"}
         tasks.append(_task("v4-unapproved-rmm-dns", "DNS lookups of unapproved RMM infrastructure.",
                            _rule("Unapproved RMM domain resolved", {"product": "windows", "category": "dns_query"}, det,
-                                 ["attack.command-and-control", "attack.t1219"]), lookback, ["sysmon:22"],
-                           kql=f"DeviceNetworkEvents\n| where RemoteUrl has_any ({_kql_list(domains)})"))  # fmt: skip
+                                 ["attack.command-and-control", "attack.t1219"]), lookback, ["sysmon:22"]))  # fmt: skip
     return tasks
 
 
@@ -263,8 +242,7 @@ def byovd_tasks(loldrivers: list[dict], lookback: int) -> list[HuntingTask]:
     return [
         _task("v5-loldrivers-hash-load", f"Load of a LOLDrivers vulnerable/malicious driver ({len(hashes)} newest hashes).",
               _rule("Known vulnerable driver loaded", {"product": "windows", "category": "driver_load"}, known, tags),
-              lookback, ["sysmon:6"],
-              kql=f"DeviceEvents\n| where ActionType == \"DriverLoad\" and SHA256 in~ ({_kql_list(hashes)})"),
+              lookback, ["sysmon:6"]),
         _task("v5-unsigned-driver-outside-drivers-dir", "Unsigned driver loaded from outside System32\\drivers.",
               _rule("Unsigned driver from unusual path", {"product": "windows", "category": "driver_load"}, odd, tags),
               lookback, ["sysmon:6"]),
@@ -287,9 +265,7 @@ def sideload_tasks(hijacklibs: list[dict], lookback: int) -> list[HuntingTask]:
     return [_task("v5-hijacklibs-sideload", "Unsigned copy of a known side-loadable DLL (HijackLibs) loaded from a "
                   "user-writable folder. Same-folder-as-signed-EXE correlation is left to triage.",
                   _rule("DLL side-loading from user-writable path", {"product": "windows", "category": "image_load"}, det,
-                        ["attack.defense-evasion", "attack.t1574.002"]), lookback, ["sysmon:7"],
-                  kql=(f"DeviceImageLoadEvents\n| where FileName in~ ({_kql_list(dlls)}) and FolderPath has_any "
-                       f"({_kql_list([p.strip(chr(92)) for p in USER_WRITABLE])})"))]  # fmt: skip
+                        ["attack.defense-evasion", "attack.t1574.002"]), lookback, ["sysmon:7"])]  # fmt: skip
 
 
 def malicious_package_tasks(osv: list[dict], lookback: int) -> list[HuntingTask]:
@@ -304,9 +280,7 @@ def malicious_package_tasks(osv: list[dict], lookback: int) -> list[HuntingTask]
     return [_task("v6-malicious-package-install", f"Install of packages flagged malicious by OSV ({len(names)} recent).",
                   _rule("Known malicious package installed", {"product": "windows", "category": "process_creation"}, det,
                         ["attack.initial-access", "attack.t1195.002"]), lookback, ["sysmon:1"],
-                  TargetScope.DEVELOPER_WORKSTATIONS,
-                  kql=(f"DeviceProcessEvents\n| where ProcessCommandLine has_any ({_kql_list(INSTALL_VERBS)}) and "
-                       f"ProcessCommandLine has_any ({_kql_list(names)})"))]  # fmt: skip
+                  TargetScope.DEVELOPER_WORKSTATIONS)]  # fmt: skip
 
 
 def safe(builder, *args) -> list[HuntingTask]:

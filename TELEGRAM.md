@@ -84,6 +84,9 @@ confidence every 10 minutes, so every active cluster would look updated.
 
 3. **Credential exposure:** affected tenants, number of masked accounts, sources (Telegram, HIBP), stealer families. No refs and no masked list beyond 5 per tenant.
 4. **Edge CVEs:** KEV entries that matched tenants' tech tags, with EPSS percentile and a "credible PoC" flag.
+4b. **Exploited CVEs to patch** (D-70): KEV entries for OS or desktop software that matched a shown tenant's tech
+   tags in this window but gave that tenant no pack (no edge hunts apply). One line each: CVE, title, EPSS
+   percentile, tenants. A reminder to patch, not a hunt. Such an entry alone makes the digest non-empty.
 5. **Dataset updates:** LOLDrivers, LOLRMM, HijackLibs, OSV — new entries since the last digest.
 6. **Health:**
    - last success or failure per collector;
@@ -111,7 +114,7 @@ confidence every 10 minutes, so every active cluster would look updated.
 | `/status` | Service health (the digest's Health section) plus DB counts |
 | `/digest` | Preview of the next digest (does not advance the cursor) |
 | `/latest [n]` | The n most recent clusters (default 5, max 20) in the digest line format |
-| `/pack <id-prefix>` | Pack summary (vector, severity, confidence, tasks, blocklist sizes, expiry) plus documents: `pack-<id>.json`, one `.yml` per task (Sigma), `queries-<id>.txt` (DSL + KQL). The prefix must be ≥ 8 hex characters and unique |
+| `/pack <id-prefix>` | Pack summary (vector, severity, confidence, tasks, blocklist sizes, expiry) plus documents: `pack-<id>.json`, one `.yml` per task (Sigma), `queries-<id>.txt` (the Wazuh DSL; no KQL since D-63). The prefix must be ≥ 8 hex characters and unique |
 | `/ioc <value>` | Normalise the value (domain, IP or SHA256; defang input accepted), run the whitelist verdict, list matching clusters. **DB only, no external lookups** |
 | `/cve <CVE-ID>` | KEV cluster status, EPSS, matched tenants, packs |
 
@@ -143,6 +146,9 @@ HC_TGBOT_TIMEZONE=Asia/Ho_Chi_Minh
 HC_TGBOT_DIGEST_TOP=10
 HC_TGBOT_SEND_EMPTY_DIGEST=true
 HC_TGBOT_ATTACH_JSON=false
+HC_TGBOT_OPS_ALERTS=false               # opt-in ops alerts (D-65)
+HC_TGBOT_OPS_ALERT_AFTER_FAILURES=3
+HC_TGBOT_OPS_ALERT_COOLDOWN_HOURS=6
 ```
 
 `HC_TGBOT_CHAT_IDS` accepts at most one ID (D-39); settings validation rejects more.
@@ -150,6 +156,17 @@ HC_TGBOT_ATTACH_JSON=false
 Compose: new service `telegram-bot` (same image, networks `backend` + `egress`) in the profile `telegram`, so a plain
 `docker compose up` does not start it. It uses `restart: on-failure` and exits 0 when `HC_TGBOT_ENABLED=false`. The
 digest runs in the existing worker/beat, on the default queue.
+
+### Ops alerts (opt-in, D-65)
+
+Off unless `HC_TGBOT_OPS_ALERTS=true`. Every 5 minutes `notify.ops_alerts` reads the heartbeats and, to the same single
+destination as the digest, sends:
+- **⚠️ Ops alert** when a job failed `HC_TGBOT_OPS_ALERT_AFTER_FAILURES` runs in a row (default 3), or is stale (no
+  success for more than twice its interval). At most once per job per `HC_TGBOT_OPS_ALERT_COOLDOWN_HOURS` (default 6).
+- **✅ Ops: recovered** when that job is ok again.
+
+The text holds the job label, its state and the short heartbeat note (an exception type or a partial-failure note),
+HTML-escaped. No intelligence, no IOC, no pack. Jobs that are `unknown` (never ran) or `not_configured` never alert.
 
 ## 8. Operational guidance
 
@@ -184,6 +201,14 @@ Manual test by the owner:
 - [ ] `/digest` preview looks right; the scheduled digest arrives at the configured time.
 - [ ] `/pack <prefix>` returns the JSON, `.yml` and query files; `/ioc` on a known cluster domain shows the cluster.
 - [ ] The same in the SOC group, with a non-allowlisted member's command ignored.
+
+Progress (owner):
+- 2026-11-05: bot created; `/status`, `/digest` (preview) and `/latest` answer in the private chat.
+- 2026-11-08: with real data (three clusters, V4/V5/V6), `/status` shows collector health, `/latest` lists the
+  clusters, `/ioc` gives the whitelist verdicts (`127.0.0.0` → drop, not_global; a public IP → block, no cluster), and an
+  unknown command (`/lastest`) gets the help hint. `/ cve` (with a space) is not a command; the form is `/cve CVE-YYYY-NNNN`.
+
+Not yet checked: a stranger gets no answer, the scheduled digest, `/pack`, `/cve`, and the SOC group.
 
 ## 10. Open items (owner decision needed)
 

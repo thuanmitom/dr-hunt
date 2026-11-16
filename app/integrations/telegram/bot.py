@@ -29,6 +29,7 @@ from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings, get_settings
+from app.core.logging import configure_logging
 from app.db.models import HuntingPack, PivotedCluster, RawIntelEvent, Tenant, cluster_event_links
 from app.integrations.telegram import digest as digest_mod
 from app.integrations.telegram.client import TelegramClient, TelegramError
@@ -342,7 +343,7 @@ def parse_ioc(raw: str) -> tuple[str, str] | None:
 
 
 def pack_files(payload: dict[str, Any]) -> list[tuple[str, bytes, str]]:
-    """pack-<id>.json, one Sigma .yml per task, queries-<id>.txt (Wazuh DSL + Defender KQL per task)."""
+    """pack-<id>.json, one Sigma .yml per task, queries-<id>.txt (the Wazuh DSL per task; no KQL, D-63)."""
     pack_id = str(payload["pack_id"])
     files = [(f"pack-{pack_id}.json", json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True).encode(),
               "application/json")]  # fmt: skip
@@ -353,8 +354,6 @@ def pack_files(payload: dict[str, Any]) -> list[tuple[str, bytes, str]]:
         queries.append(f"### {task['task_id']}")
         if compiled.get("wazuh_es_dsl") is not None:
             queries += ["# Wazuh / OpenSearch DSL", json.dumps(compiled["wazuh_es_dsl"], indent=2, sort_keys=True)]
-        if compiled.get("kql_defender"):
-            queries += ["# Microsoft Defender XDR KQL", compiled["kql_defender"]]
         queries.append("")
     files.append((f"queries-{pack_id}.txt", "\n".join(queries).encode(), "text/plain"))
     return files
@@ -376,7 +375,7 @@ async def _main(settings: Settings) -> None:
 
 def main() -> None:
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    configure_logging(settings.log_level, settings.log_format)
     logging.getLogger("httpx").setLevel(logging.WARNING)  # a request line every poll otherwise
     if not settings.tgbot_enabled or settings.tgbot_token is None:
         log.error("telegram bot disabled: set HC_TGBOT_ENABLED=true and HC_TGBOT_TOKEN, then restart")

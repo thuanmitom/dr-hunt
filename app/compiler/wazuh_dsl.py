@@ -4,6 +4,11 @@ The stock Lucene backend emits ``query_string`` wildcards, which are case-sensit
 keyword fields while Sigma ``contains``/``endswith`` are case-insensitive (``*powershell*`` would miss
 ``PowerShell``). This emitter walks pySigma's parsed condition tree after the processing pipeline
 and produces ``term``/``wildcard`` queries with ``case_insensitive: true``.
+
+Wazuh 4.x's eventchannel decoder stores every backslash of a Windows event value doubled
+(``C:\\\\Windows\\\\System32\\\\drivers\\\\x.sys`` for ``C:\\Windows\\System32\\drivers\\x.sys``; the official
+ruleset matches paths that way). Literal backslashes in Sigma values are therefore doubled here,
+otherwise ``startswith``/``contains`` on multi-segment paths never match (D-53).
 """
 
 from __future__ import annotations
@@ -51,8 +56,13 @@ def wazuh_pipeline() -> ProcessingPipeline:
     return sysmon_pipeline() + ProcessingPipeline(name="wazuh", priority=50, items=items)
 
 
+def wazuh_stored(value: str) -> str:
+    """A Windows event value as the Wazuh 4.x eventchannel decoder stores it: every backslash doubled."""
+    return value.replace("\\", "\\\\")
+
+
 def _escape(part: str) -> str:
-    return part.replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?")
+    return wazuh_stored(part).replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?")
 
 
 def _string_query(field: str, value: SigmaString) -> dict[str, Any]:
@@ -60,7 +70,7 @@ def _string_query(field: str, value: SigmaString) -> dict[str, Any]:
     if not value.contains_special():
         if PLACEHOLDER.match(plain):
             return {"terms": {field: [plain]}}  # SOAR expands the placeholder into the value list
-        return {"term": {field: {"value": plain, "case_insensitive": True}}}
+        return {"term": {field: {"value": wazuh_stored(plain), "case_insensitive": True}}}
     pattern = ""
     for p in value.s:
         if p is SpecialChars.WILDCARD_MULTI:

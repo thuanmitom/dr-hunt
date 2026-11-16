@@ -1,6 +1,6 @@
-# OutSight HuntCompiler — Tài liệu tổng hợp (Phase 1 → 3, 2b và T)
+# OutSight HuntCompiler — Tài liệu tổng hợp (Phase 1 → 3, 2b, T, I, H, Q và R)
 
-> Phiên bản code: `0.4.0` · 170 test pass (có PostgreSQL) · 4 migration · Cập nhật: 02/11/2026
+> Phiên bản code: `0.4.0` · 349 test pass (có PostgreSQL) · 4 migration · Cập nhật: 16/11/2026
 > Tài liệu kỹ thuật gốc bằng tiếng Anh: `README.md`, `SPEC.md`, `DECISIONS.md`, `ARCHITECTURE.md`, `TELEGRAM.md`,
 > `docs/AI_RISK_ASSESSMENT.md`, `CLAUDE.md`.
 
@@ -16,7 +16,7 @@ tin qua bot Telegram: digest hằng ngày và các lệnh tra cứu.
 
 Hệ thống của bên tích hợp tự chạy truy vấn hồi tố (retro-hunt) 14–30 ngày và gửi về 1 bit `sighting` kèm `evaluable`.
 HuntCompiler không chạy hunt và không chạm vào mạng nội bộ. Phase 4 (n8n + Wazuh) đã huỷ ngày 01/11/2026; hướng dẫn
-tích hợp sẽ nằm trong Integration Kit (Phase I).
+tích hợp nằm trong Integration Kit (`integration_kit/`, Phase I) cho Wazuh, Elastic và Splunk.
 
 ### Nguyên tắc bất biến
 
@@ -38,8 +38,8 @@ tích hợp sẽ nằm trong Integration Kit (Phase I).
                                                                                 ║
  T1 Collectors ─► T2 Pivot/Unpack/Guardrails ─► T3 Compiler (+AI) ─► T4 Lưu trữ/API/Dispatch
  CertStream        Whitelist theo hostname       Sigma → DSL Wazuh      PostgreSQL, Redis,
- URLScan           Giải mã stager đệ quy          Sigma → KQL Defender   Celery, FastAPI
- KEV/EPSS/GitHub   JARM, favicon mmh3, Shodan     Template cố định       │
+ URLScan           Giải mã stager đệ quy          Sigma gốc kèm gói      Celery, FastAPI
+ KEV/EPSS/GitHub   JARM, favicon mmh3             Template cố định       │
  Telegram, HIBP    Brand matcher (homoglyph)      AI đề xuất + 6 cửa     │ Hunting Pack v2.0 (HMAC)
  LOLDrivers/RMM    Leak redactor (HMAC ref)       Scoring time-decay     │ pull (mặc định) / push
  HijackLibs, OSV                                                         ▼
@@ -97,12 +97,12 @@ SOAR tự pull → feedback cập nhật điểm của cluster.
   - `hunt_only`: site phổ biến (có thể bị hack để cài ClickFix), root dịch vụ dùng chung, dải IP cloud.
   - `drop`: tài sản của chính tenant, CDN, DNS resolver, domain lõi của Microsoft/Google, Tranco Top 10K.
 - Bộ giải mã stager tĩnh: EncodedCommand, FromBase64String + gzip, nối chuỗi, char code, `^`, backtick, chuỗi đảo, XOR, IOC đã defang. Có giới hạn chống zip bomb.
-- JARM, favicon mmh3, pivot Shodan, chấm điểm AiTM, brand matcher (homoglyph, IDN, dấu tiếng Việt, sai 1 ký tự).
+- JARM, favicon mmh3, chấm điểm AiTM, brand matcher (homoglyph, IDN, dấu tiếng Việt, sai 1 ký tự).
 - CertStream chạy ở container riêng.
 
 ### Phase 3 — Compiler, AI, scoring, gói, giao nhận
 - **Sinh DSL Wazuh từ cây điều kiện của pySigma**, dùng `case_insensitive: true`. Backend Lucene mặc định sẽ trượt `PowerShell` khi tìm `*powershell*`.
-- **Harness** chạy DSL trên sự kiện mẫu. **Lint KQL** bắt lỗi `endswith "...RunMRU*"`, loại câu không bao giờ khớp mà pySigma sinh ra.
+- **Harness** chạy DSL trên sự kiện mẫu. (Gói không còn KQL từ D-63, nên cũng không còn lint KQL.)
 - Template cố định cho từng vector, nên gói không phụ thuộc AI.
 - **AI (Gemini, có thể thay bằng model local):** chỉ điền một cấu trúc hẹp. Mỗi rule phải qua 6 cửa: độ rộng → nguồn gốc IOC → whitelist → biên dịch → harness → contract. Mọi lần gọi được audit trong bảng `ai_compilations`.
 - Scoring tất định: điểm theo đặc trưng bằng chứng, giảm theo half-life từng vector, tăng khi có sighting. Gói chỉ phát hành lại khi nội dung thật sự đổi.
@@ -118,7 +118,7 @@ SOAR tự pull → feedback cập nhật điểm của cluster.
 ### Phase T — Bot Telegram, chặn SSRF, sửa lỗi (Built, chưa Verified)
 - Bot Telegram: digest hằng ngày và 8 lệnh chỉ đọc database. Chi tiết và cách cài ở mục 12.
 - Chặn SSRF cho probe JARM/favicon (`app/core/netguard.py`).
-- Sửa 3 lỗi: OSV đọc qua file chỉ mục, KQL V1 dùng bảng `EntraIdSignInEvents`, task mạng IOC chỉ khớp đúng host và subdomain.
+- Sửa 3 lỗi: OSV đọc qua file chỉ mục, KQL V1 dùng bảng `EntraIdSignInEvents` (sau đó bỏ hẳn KQL, D-63), task mạng IOC chỉ khớp đúng host và subdomain.
 
 ---
 
@@ -149,12 +149,12 @@ Bên nhận phải kiểm trên **raw body** (ví dụ n8n: bật *Raw Body*), t
 |---|---|
 | `${HC_EDGE_DEVICE_INTERNAL_IPS}` | IP phía trong của VPN/firewall |
 | `${HC_DMZ_HOST_IPS}` | IP các máy DMZ |
-| `${HC_AFFECTED_UPNS}` | UPN của tài khoản bị lộ, dùng cho KQL |
+| `${HC_AFFECTED_UPNS}` | UPN của tài khoản bị lộ. Từ D-63 không template nào dùng nữa (chỉ KQL từng dùng) |
 | `${HC_AFFECTED_SAM_ACCOUNTS}` | sAMAccountName của tài khoản bị lộ, dùng cho Wazuh |
 
 Quy tắc thay thế:
 - Trong DSL: phần tử mảng đúng bằng placeholder được thay bằng danh sách giá trị.
-- Trong KQL: placeholder được thay bằng các giá trị đặt trong ngoặc kép, ngăn cách bởi dấu phẩy.
+- (Gói phát hành trước D-63 còn có KQL; ở đó placeholder được thay bằng các giá trị trong ngoặc kép, cách nhau bởi dấu phẩy.)
 
 **Feedback:** `POST /api/v1/feedback` với body `{pack_id, sighting, evaluable, evaluated_at}`. `evaluable=false`
 nghĩa là thiếu telemetry, tức là **chưa biết**, không phải sạch.
@@ -185,7 +185,8 @@ app/integrations/telegram   bot Telegram: client, format, digest, bot
 app/worker      Celery, runtime, heartbeat collector (Redis)
 migrations/     4 revision                      contracts/      JSON Schema + gói mẫu ClickFix
 config/         tenant_manifest.yaml            scripts/        load_manifest, export_contracts, telegram_login
-docs/           AI_RISK_ASSESSMENT.md           tests/          170 test
+docs/           AI_RISK_ASSESSMENT.md, plans/ (kế hoạch tiếng Việt)   tests/   349 test
+integration_kit/  Phase I: hướng dẫn Wazuh, Elastic, Splunk và consumer mẫu (chạy phía bên tích hợp)
 ```
 
 ---
@@ -208,7 +209,7 @@ curl -s http://127.0.0.1:8000/readyz
 | Nhóm | Biến |
 |---|---|
 | Hạ tầng | `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `HC_MASTER_ENCRYPTION_KEYS` |
-| Nguồn TI | `HC_URLSCAN_API_KEY`, `HC_GITHUB_TOKEN`, `HC_SHODAN_API_KEY`, `HC_ABUSECH_AUTH_KEY`, `HC_HIBP_API_KEY`, `HC_TELEGRAM_*` |
+| Nguồn TI | `HC_URLSCAN_API_KEY`, `HC_GITHUB_TOKEN`, `HC_ABUSECH_AUTH_KEY`, `HC_HIBP_API_KEY`, `HC_TELEGRAM_*` |
 | AI | `HC_LLM_ENABLED`, `HC_GEMINI_API_KEY`, `HC_LLM_DAILY_TOKEN_BUDGET`, `HC_LLM_VECTORS` |
 | Bot Telegram | `HC_TGBOT_ENABLED`, `HC_TGBOT_TOKEN`, `HC_TGBOT_CHAT_IDS`, `HC_TGBOT_ALLOWED_USER_IDS`, `HC_TGBOT_TENANTS`, `HC_TGBOT_DIGEST_TIMES`, `HC_TGBOT_TIMEZONE` |
 | Tenant | `HC_TENANT_<TÊN>_HMAC_SECRET`, `HC_TENANT_<TÊN>_API_TOKEN` (tên biến khai báo trong manifest) |
@@ -217,13 +218,17 @@ curl -s http://127.0.0.1:8000/readyz
 
 ## 9. Kiểm thử: đã và chưa kiểm chứng
 
-**Đã kiểm chứng (170 test, PostgreSQL 16 thật, 02/11/2026):**
+**Đã kiểm chứng (349 test, PostgreSQL 16 thật, 15/11/2026):**
 - Migration chạy lên/xuống.
 - Contract và guardrail.
 - Chữ ký HMAC.
 - Whitelist trên MISP warninglists thật.
-- Unpacker. (Đính chính 02/11/2026: repo không có test JARM trên TLS server, brand matcher, chấm điểm AiTM, phát hiện
-  clipboard lure, khớp KEV với tech tag, heuristic PoC giả hay Retry-After. Các mục này đã ghi vào known gaps.)
+- Unpacker. Brand matcher, chấm điểm AiTM, phát hiện clipboard lure, khớp KEV với tech tag, heuristic PoC giả, Retry-After
+  và JARM trên một TLS server cục bộ (test bổ sung ngày 05/11/2026; trước đó README ghi là đã test nhưng repo không có).
+- Hai lỗi tìm thấy ngày 05/11/2026 đã được sửa: chữ "server" chung chung làm khớp nhầm KEV với tech tag;
+  `Retry-After` dạng ngày giờ làm collector báo lỗi.
+- Integration Kit: chữ ký, kiểm lại pack, placeholder, giải tài khoản bị lộ, chuyển Sigma cho Splunk và Elastic, ba
+  adapter, endpoint nhận push; một test end-to-end chạy consumer qua API thật trên PostgreSQL.
 - Chặn SSRF: loopback, RFC1918, metadata `169.254.169.254`, redirect sang địa chỉ nội bộ đều bị chặn; JARM và favicon
   kết nối đúng IP đã kiểm.
 - OSV qua file chỉ mục và từng bản ghi; lỗi một ecosystem không làm mất ecosystem kia.
@@ -234,12 +239,19 @@ curl -s http://127.0.0.1:8000/readyz
 - Luồng end-to-end: tín hiệu → cluster → gói cho 2 tenant → không phát hành lại → push có retry → pull có chữ ký → feedback.
 - Luồng rò rỉ → gói có `affected_accounts`.
 
-**Chưa kiểm chứng (sandbox không ra được Internet):**
-- API thật của URLScan, GitHub search, CISA/FIRST, Shodan, Gemini, Telegram (Telethon và Bot API), HIBP, MalwareBazaar,
-  tải bản ghi OSV (định dạng file chỉ mục và kích thước đã kiểm ngày 02/11/2026).
-- Build Docker image.
-- Wazuh indexer thật.
+**Chưa chạy thật:**
+- API thật của URLScan, tìm code trên GitHub (cần token), Gemini, Telegram CTI (Telethon), HIBP, MalwareBazaar.
 - Cú pháp query URLScan theo gói tài khoản bạn dùng.
+
+**Đã chạy thật ngày 14–15/11/2026:** build Docker image; CISA KEV, FIRST EPSS, tìm repo PoC trên GitHub (không token);
+các dataset tham chiếu, kể cả tải bản ghi OSV; HTTPS trong LAN qua Caddy (xem mục 14 và 16). Bot Telegram (Bot API)
+đã được bạn chạy thử ngày 05/11.
+
+**Đã chạy thật ngày 08/11/2026:**
+- Stack docker compose chạy thử: mọi health check xanh, `/readyz` trả 200.
+- Wazuh indexer chính hãng 4.14.7 (OpenSearch 2.19.5), mapping chính thức của Wazuh: truy vấn của pack chạy đúng,
+  kể cả `case_insensitive`. Lần chạy đầu tìm ra lỗi Wazuh lưu đường dẫn Windows với dấu `\` nhân đôi, đã sửa (D-53);
+  lần chạy lại 12/12 task đúng. Xem `integration_kit/wazuh/SAMPLE_RUN.md`.
 
 ---
 
@@ -257,9 +269,12 @@ curl -s http://127.0.0.1:8000/readyz
 
 **Phase 4 (n8n + Wazuh) đã huỷ ngày 01/11/2026.** HuntCompiler là dịch vụ API; bên tích hợp tự chạy hunt.
 
-**Phase I — Integration Kit (chờ trả lời IQ1–IQ3 trong `SPEC.md` §9):** mỗi nền tảng (Wazuh, Splunk, Elastic,
-Zabbix…) có một hướng dẫn và ví dụ: pull hoặc nhận gói, kiểm HMAC trên raw body, thay placeholder, chạy task, gửi
-`sighting` và `evaluable`.
+**Phase I — Integration Kit:** đã xây xong (mục 13). Wazuh đã chạy thử; Elastic và Splunk còn chờ.
+
+**Phase H — Hoàn thiện để chạy thật:** đã xây xong và chạy thật đủ (mục 14).
+
+**Phase Q và R:** đã xây xong các mục được duyệt (mục 15 và 16). Còn chờ: Q3 (thử phát hiện trên Windows thật), Q7
+(sao lưu ra ngoài máy), Q8 (lọc archives Wazuh), R6 (chạy thật Gemini khi có key).
 
 **Bổ sung các phần còn thiếu ở mục 3:**
 - Token replay, DeviceCode, OAuth consent cho V1.
@@ -301,3 +316,148 @@ Group nên để riêng tư, tắt link mời, và chỉ thêm người có tron
 
 **Để có dữ liệu thật khi test mà không cần API key trả phí:** LOLDrivers, LOLRMM, HijackLibs, OSV, CISA KEV và EPSS đều
 không cần key. Sau khi nạp manifest, các cluster và pack V2/V4/V5/V6 sẽ xuất hiện trong digest.
+
+**Collector chỉ chạy theo lịch.** Sau khi khởi động, dataset tham chiếu chỉ chạy ở mốc 6 giờ kế tiếp, còn HIBP lúc 03:30
+UTC. Muốn có dữ liệu ngay thì kích hoạt bằng tay:
+
+```bash
+docker compose exec worker celery -A app.worker.celery_app:celery_app call collectors.reference_sync
+docker compose exec worker celery -A app.worker.celery_app:celery_app call collectors.edge_exploit_sweep
+```
+
+Chờ khoảng 15 phút (gom cụm mỗi 5 phút, tạo pack mỗi 10 phút), rồi thử `/latest`, `/pack`, `/ioc`.
+
+**CertStream:** endpoint công khai mặc định `wss://certstream.calidog.io/` nhận kết nối nhưng không gửi chứng chỉ nào
+(kiểm ngày 05/11/2026), nên CertStream luôn báo `unknown`. Cần tự chạy certstream-server-go và đặt `HC_CERTSTREAM_URL`.
+
+---
+
+## 13. Integration Kit (Phase I)
+
+Trạng thái: **Built**. Wazuh đã chạy thử trọn luồng trên Wazuh indexer chính hãng 4.14.7 (mẫu kết quả:
+`integration_kit/wazuh/SAMPLE_RUN.md`). Elastic và Splunk mỗi bên còn cần một lần chạy với nền tảng thật.
+
+Thư mục `integration_kit/` dành cho bên tích hợp. Nó không nằm trong image Docker, không import code của HuntCompiler và
+có file dependency riêng, khoá bằng hash.
+
+- **Luồng:** pull (hoặc nhận push), kiểm HMAC, kiểm lại pack theo JSON Schema và guardrail, thay placeholder bằng dữ
+  liệu nội bộ, giải tài khoản bị lộ từ danh bạ nội bộ, chạy từng task, chỉ gửi về `sighting` và `evaluable`. Số hit và
+  chi tiết nằm lại trong báo cáo cục bộ.
+- **Truy vấn:** Wazuh chạy DSL có sẵn trong pack. Elastic (mặc định EQL) và Splunk chạy rule Sigma được pySigma chuyển
+  sang. Zabbix và Defender XDR nằm ngoài phạm vi.
+- **An toàn:** chữ ký đúng vẫn phải kiểm lại pack; quá `HC_KIT_MAX_HITS` hit thì coi là rule hỏng; consumer không bao
+  giờ tự chặn.
+
+Bắt đầu từ `integration_kit/README.md`, rồi đọc hướng dẫn của nền tảng bạn dùng: `wazuh/GUIDE.md`, `elastic/GUIDE.md`,
+`splunk/GUIDE.md`.
+
+---
+
+## 14. Phase H — Hoàn thiện để chạy thật
+
+Trạng thái: **Built và Verified** (15/11/2026: đã chạy thật đủ các mục bắt buộc). Tiêu chí và kết quả: `SPEC.md` §6.
+Các quyết định: D-54 đến D-62.
+
+- **Thiếu key không còn làm hỏng lượt quét.** Biến để trống trong `.env` được coi là chưa đặt, nên collector báo
+  `not_configured` thay vì gọi API với key rỗng (D-62). GitHub chỉ bổ sung thông tin cho cảnh báo KEV: thiếu token hay
+  GitHub lỗi thì cảnh báo vẫn ra, chỉ thiếu phần PoC/Nuclei, và `/status` ghi rõ lý do (D-54).
+- **Bảo vệ API (D-56):** mỗi tenant 60 lần gọi/phút. Một IP xác thực sai 20 lần trong 10 phút thì bị chặn (429) tới hết
+  khung giờ đó. Tên tenant không tồn tại bị từ chối y hệt chữ ký sai, nên không dò được tên khách hàng.
+- **Dọn dữ liệu (D-57):** 02:45 UTC hằng ngày. Xoá sự kiện thô cũ hơn 90 ngày (trừ khi cụm của nó còn hoạt động) và
+  nhật ký AI cũ hơn 180 ngày.
+- **Log JSON (D-58):** đặt `HC_LOG_FORMAT=json`.
+- **Bỏ hẳn KQL cho Defender (D-63, 10/11/2026):** gói chỉ còn Sigma và DSL cho Wazuh; Elastic và Splunk tự chuyển từ
+  Sigma. Trường `kql_defender` để trống để gói cũ vẫn hợp lệ. Hệ quả: task V1 mất phần kiểm tra đăng nhập Entra (chỉ
+  có trong KQL), còn lại kiểm tra 4625 trên máy chủ nội bộ.
+- **Triển khai (D-59 đến D-61):** mọi image được ghim theo digest. Ba profile tuỳ chọn:
+  `edge` (Caddy tự cấp HTTPS cho `HC_PUBLIC_HOSTNAME`), `backup` (sao lưu PostgreSQL hằng ngày, giữ 14 bản),
+  `certstream` (tự chạy máy chủ CertStream).
+- **Nợ kỹ thuật:** bỏ `assert` trong dispatcher (gói push của tenant đã chuyển sang pull được chuyển sang pull API), xoá
+  mã Shodan không dùng (D-55), contract luôn ghi xuống dòng LF, thêm file LICENSE (độc quyền).
+
+Đã chạy thật ngày 09/11/2026: khôi phục từ bản sao lưu; máy chủ CertStream tự host gửi chứng chỉ cho watcher; HTTPS qua
+Caddy với chứng chỉ nội bộ (TLS, chỉ mở đúng đường dẫn, pull gói có chữ ký hợp lệ, khoá IP, log JSON). HTTPS với tên
+miền thật và chứng chỉ Let's Encrypt giờ là tuỳ chọn (D-72). Ngày 15/11 đã chạy thật HTTPS trong LAN với CA nội
+bộ của Caddy: consumer kéo pack, kiểm chữ ký đúng.
+
+---
+
+## 15. Phase Q — Nâng chất lượng (còn Q3, Q7, Q8)
+
+Kế hoạch: `docs/plans/KE_HOACH_PHASE_Q.md`. Đã duyệt và xây xong ngày 13/11/2026:
+
+- **CVE trong KEV tự đủ điểm (D-64):** "có trong KEV" được 70 điểm thay vì 50. Một lỗ hổng CISA xác nhận đang bị khai
+  thác sẽ đạt ngưỡng gửi 60 trong suốt 7 ngày của cửa sổ KEV, kể cả khi EPSS thấp và chưa có PoC.
+- **Cảnh báo vận hành, tự bật (D-65):** đặt `HC_TGBOT_OPS_ALERTS=true` để nhận tin Telegram khi một job lỗi 3 lần liên
+  tiếp hoặc ngừng báo cáo (tối đa 6 giờ một lần), và tin khi job hồi phục. Tin này không chứa tình báo.
+- **Không giả được IP (D-66):** API chỉ tin header `X-Forwarded-For` từ địa chỉ cố định của Caddy trên mạng nội bộ
+  `edge` (`HC_EDGE_SUBNET`, `HC_EDGE_CADDY_IP`).
+
+Q2 (CI) và Q4 (bổ sung dữ liệu GitHub) đã làm trong Phase R (mục 16). Còn chờ bạn: Q3 (thử trên Windows thật), Q7
+(sao lưu ra ngoài), Q8 (lọc archives Wazuh).
+
+---
+
+## 16. Phase R — Sẵn sàng cho người dùng tự cài đặt
+
+Trạng thái: **Built** (code xong, test qua, có test với PostgreSQL và chạy thật trên Docker). Chưa *Verified*: CI chưa
+chạy trên GitHub (chờ bạn push), và R6 (chạy thật Gemini) chờ key. Kế hoạch và kết quả: `docs/plans/KE_HOACH_PHASE_R.md`.
+Các quyết định: D-70 đến D-74.
+
+- **Phân loại CVE trong KEV (D-70).** Thiết bị biên và máy chủ phơi ra Internet (VPN, firewall, cổng email, Exchange,
+  vCenter, phần mềm truyền file...) vẫn ra gói V2 kèm task săn tìm. Hệ điều hành và phần mềm máy trạm (Windows, Office,
+  trình duyệt...) không ra gói; digest Telegram liệt kê chúng ở mục mới "Exploited CVEs to patch" (CVE đang bị khai thác,
+  cần vá). Sản phẩm có trong `login_portals` của manifest luôn được coi là phơi ra Internet. Bảng phân loại nằm trong
+  code, đã đối chiếu với toàn bộ danh mục KEV.
+- **Gọn log (D-58).** Log từng request HTTP chỉ hiện khi `HC_LOG_LEVEL=DEBUG`. Khi `HC_LOG_FORMAT=json`, cả dòng khởi
+  động của API cũng ra JSON.
+- **Bổ sung lại dữ liệu GitHub (D-71).** 04:15 UTC hằng ngày, thử lại phần PoC/Nuclei cho CVE trong cửa sổ KEV bị thiếu
+  dữ liệu, tối đa `HC_KEV_REENRICH_MAX_ATTEMPTS` (5) lần mỗi CVE. Lỗi hiện trên trang sức khoẻ.
+- **Chạy trên máy của bạn (D-72).** `HC_TLS_MODE=internal`: Caddy tự cấp chứng chỉ bằng CA nội bộ, dùng trong LAN mà
+  không cần tên miền công khai. Consumer chạy cùng máy được dùng `http://127.0.0.1` hoặc `http://localhost`; mọi địa
+  chỉ khác vẫn bắt buộc HTTPS. Tên miền công khai với Let's Encrypt giờ là tuỳ chọn.
+- **Chính sách Telegram CTI và HIBP (D-73).** Chỉ theo dõi kênh công khai, chỉ đọc, bằng tài khoản nghiên cứu riêng;
+  HIBP chỉ dùng cho domain bạn sở hữu và đã xác minh.
+- **CI (D-74).** `.github/workflows/ci.yml` chạy lint, toàn bộ test với PostgreSQL, `alembic check`, kiểm tra
+  contract và `pip-audit`. Các action ghim theo commit SHA, token chỉ đọc. `requirements-dev.txt` giờ được khoá bằng
+  hash từ `requirements-dev.in`.
+
+### Cài đặt trên một máy (tóm tắt `docs/INSTALL.md`)
+
+**Chọn máy.** Nên dùng máy hoặc máy ảo riêng, không dùng máy làm việc hằng ngày: hệ thống xử lý nội dung do kẻ tấn công
+viết (chỉ đọc như văn bản, không bao giờ chạy), tách riêng để hạn chế hậu quả nếu có lỗi.
+
+**Tài nguyên đo thật ngày 15/11/2026** (cấu hình mặc định, một tenant, đã nạp dataset tham chiếu):
+
+| Thành phần | RAM | Ghi chú |
+|---|---|---|
+| worker (4 tiến trình xử lý) | 650 MB (cao nhất 690 MB) | phần lớn là danh sách whitelist MISP (~300 MB), nạp một lần rồi 4 tiến trình dùng chung (D-75; trước đó 1,5 GB) |
+| beat, api, certstream | 60–80 MB mỗi cái | |
+| PostgreSQL, Redis | 37 MB và 5 MB | |
+| **Tổng** | **khoảng 0,9 GB** | Caddy thêm 15 MB; bot Telegram, backup thêm 50–100 MB mỗi cái |
+
+CPU cao nhất 79% một nhân (khi đồng bộ dataset). Ổ đĩa: image 0,54 GB, image PostgreSQL và Redis 0,48 GB, dữ liệu
+ban đầu khoảng 50 MB.
+
+| | Tối thiểu | Khuyến nghị |
+|---|---|---|
+| CPU | 2 nhân | 4 nhân |
+| RAM | 4 GB | 8 GB |
+| Ổ đĩa trống | 20 GB | 40 GB (có sao lưu) |
+
+**Các bước:**
+1. `cp .env.example .env`, điền mật khẩu PostgreSQL và Redis, khoá Fernet (`HC_MASTER_ENCRYPTION_KEYS`), secret và
+   token của tenant. Nên có `HC_GITHUB_TOKEN` (token chỉ đọc repo công khai).
+2. Sửa `config/tenant_manifest.yaml`: domain, cổng đăng nhập, dải IP công khai, sản phẩm đang dùng. Chỉ thông tin công khai.
+3. `docker compose up -d --build`, rồi nạp manifest và kiểm tra `/readyz` (lệnh ở mục 8).
+4. Cho consumer kết nối:
+   - **cùng máy:** `http://127.0.0.1:8000`;
+   - **trong LAN:** đặt `HC_TLS_MODE=internal` và `HC_PUBLIC_HOSTNAME` (tên hoặc IP trong LAN), chạy
+     `docker compose --profile edge up -d caddy`, lấy chứng chỉ gốc bằng
+     `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./huntcompiler-root.crt` rồi trỏ
+     `HC_KIT_CA_BUNDLE` của consumer tới file đó;
+   - **qua Internet:** để `HC_TLS_MODE=public`, tên miền trỏ về máy, mở cổng 80 và 443.
+5. Sao lưu: `docker compose --profile backup up -d backup`, và chép bản sao lưu ra nơi khác.
+
+**Cập nhật:** `git pull` rồi `docker compose up -d --build` (migration tự chạy). **Gỡ cài đặt:** lệnh `down -v` trong
+`docs/INSTALL.md` xoá toàn bộ dữ liệu, nên sao lưu trước nếu còn cần.

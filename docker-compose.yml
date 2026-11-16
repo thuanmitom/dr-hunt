@@ -3,7 +3,11 @@ name: outsight-huntcompiler
 # Network layout
 #   backend : internal-only (no Internet egress). postgres + redis live here exclusively.
 #   egress  : Internet access for collectors/API. Only app containers join it.
-# The API binds to 127.0.0.1 — publish it through a TLS reverse proxy, never directly.
+#   edge    : internal link Caddy -> API only (D-66). Caddy has a fixed address there, and uvicorn trusts
+#             X-Forwarded-For from that address alone, so no other container or local process can spoof a client IP.
+# The API binds to 127.0.0.1 — publish it through a TLS reverse proxy, never directly (profile `edge`: Caddy).
+# Images are pinned by digest (D-59); update a pin deliberately, never by pulling a moving tag.
+# Optional profiles: telegram (command bot), edge (HTTPS), backup (daily pg_dump), certstream (self-hosted CT stream).
 
 x-app-env: &app-env
   HC_DATABASE_URL: postgresql+asyncpg://huntcompiler:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/huntcompiler
@@ -27,7 +31,7 @@ x-app: &app
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     environment:
       POSTGRES_DB: huntcompiler
       POSTGRES_USER: huntcompiler
@@ -42,7 +46,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
     # noeviction: Redis is the Celery broker — evicting keys would silently drop queued tasks.
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}",
               "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
@@ -68,8 +72,12 @@ services:
   api:
     <<: *app
     command: ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000",
-              "--proxy-headers", "--forwarded-allow-ips", "*", "--no-server-header"]
+              "--proxy-headers", "--forwarded-allow-ips", "${HC_EDGE_CADDY_IP:-172.31.250.2}", "--no-server-header"]
     ports: ["127.0.0.1:8000:8000"]
+    networks:
+      backend: {}
+      egress: {}
+      edge: { aliases: [api-edge] }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"]
       interval: 30s
@@ -122,11 +130,69 @@ services:
       redis: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
 
+  # Phase H: public HTTPS for tenants (D-59). Needs HC_PUBLIC_HOSTNAME whose DNS points here, ports 80/443 open.
+  caddy:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    profiles: ["edge"]
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      HC_PUBLIC_HOSTNAME: ${HC_PUBLIC_HOSTNAME:-}
+      HC_TLS_MODE: ${HC_TLS_MODE:-public}  # public (Let's Encrypt) or internal (Caddy's local CA, LAN), D-72
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      egress: {}
+      edge: { ipv4_address: "${HC_EDGE_CADDY_IP:-172.31.250.2}" }
+    depends_on:
+      api: { condition: service_healthy }
+
+  # Phase H: daily PostgreSQL backups, newest HC_BACKUP_KEEP kept (D-60). Restore steps: README.md "Backups".
+  backup:
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    profiles: ["backup"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: huntcompiler
+      PGDATABASE: huntcompiler
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      HC_BACKUP_KEEP: ${HC_BACKUP_KEEP:-14}
+    volumes:
+      - ./deploy/backup.sh:/backup.sh:ro
+      - pg_backups:/backups
+    networks: [backend]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # Phase H: self-hosted CertStream (D-61). Set HC_CERTSTREAM_URL=ws://certstream-server:8080/ and recreate
+  # the certstream watcher. The server reads public CT logs over the Internet; no port is published.
+  certstream-server:
+    image: 0rickyy0/certstream-server-go:v1.10.1@sha256:8938600fa61acb807c56bce05229216c3101a65e9aa976082996f40c3b56a633
+    profiles: ["certstream"]
+    restart: unless-stopped
+    volumes:
+      - ./deploy/certstream/config.yaml:/app/config.yaml:ro
+    networks: [egress]
+
 volumes:
   pg_data:
   redis_data:
+  pg_backups:
+  caddy_data:
+  caddy_config:
 
 networks:
   backend:
     internal: true
   egress:
+  edge:
+    internal: true
+    ipam:
+      config:
+        # Dynamic addresses (the API's) come from ip_range only, so they can never take Caddy's fixed address.
+        - subnet: "${HC_EDGE_SUBNET:-172.31.250.0/28}"
+          ip_range: "${HC_EDGE_IP_RANGE:-172.31.250.8/29}"

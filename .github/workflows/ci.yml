@@ -1,0 +1,81 @@
+# Continuous integration (D-74): the "Definition of done" checks from CLAUDE.md §4 on every push and pull request.
+# Actions and the PostgreSQL service image are pinned by commit SHA / digest; Python packages install from the
+# hash-locked requirements-dev.txt only. The job needs no secrets and gets a read-only token.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+        env:
+          POSTGRES_USER: hc
+          POSTGRES_PASSWORD: hc-ci-only
+          POSTGRES_DB: hc_test
+        ports: ["127.0.0.1:5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hc -d hc_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # a disposable database that exists only for this job
+      HC_TEST_DATABASE_URL: postgresql+asyncpg://hc:hc-ci-only@127.0.0.1:5432/hc_test
+      HC_DATABASE_URL: postgresql+asyncpg://hc:hc-ci-only@127.0.0.1:5432/hc_test
+      HC_ENVIRONMENT: dev
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (hash-locked)
+        run: python -m pip install --require-hashes -r requirements-dev.txt
+
+      - name: Throwaway encryption key for this job
+        run: echo "HC_MASTER_ENCRYPTION_KEYS=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+
+      - name: Lint and format
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Tests (unit and PostgreSQL integration)
+        run: pytest -q
+
+      - name: Migrations apply and match the models
+        run: |
+          alembic upgrade head
+          alembic check
+
+      - name: Contracts are up to date
+        run: |
+          python -m scripts.export_contracts
+          git diff --exit-code -- contracts/
+          cmp contracts/hunting_pack_v2.schema.json integration_kit/reference_consumer/hunting_pack_v2.schema.json
+
+      # One accepted advisory (D-74): PYSEC-2026-2447 / CVE-2025-69872, diskcache <= 5.6.3 unpickles its cache files.
+      # No fixed release exists. diskcache comes with pySigma, which uses it only to cache MITRE data that HuntCompiler
+      # never loads, and the cache directory belongs to the service user. Remove the exception once a fix ships.
+      - name: Known vulnerabilities in the locked dependencies
+        run: |
+          pip-audit --strict --require-hashes --disable-pip --ignore-vuln PYSEC-2026-2447 -r requirements-dev.txt
+          pip-audit --strict --require-hashes --disable-pip --ignore-vuln PYSEC-2026-2447 -r integration_kit/requirements.txt

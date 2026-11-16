@@ -23,7 +23,8 @@ def main() -> None:
         schema = model.model_json_schema(mode=mode)
         schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
         schema["$id"] = f"https://outsight.local/contracts/{filename}"
-        (OUT / filename).write_text(json.dumps(schema, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        text = json.dumps(schema, indent=2, ensure_ascii=False) + "\n"
+        (OUT / filename).write_text(text, encoding="utf-8", newline="\n")  # LF on every OS: no CRLF-only diffs
         print(f"wrote contracts/{filename}")
 
 

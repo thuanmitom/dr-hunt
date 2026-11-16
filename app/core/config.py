@@ -21,10 +21,14 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # `HC_URLSCAN_API_KEY=` (blank, as in .env.example) means "not set": without this an optional key became
+        # SecretStr("") and the collector called the API with an empty key instead of reporting not_configured.
+        env_ignore_empty=True,
     )
 
     environment: Literal["dev", "prod"] = "prod"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_format: Literal["text", "json"] = Field(default="text", description="json: one JSON object per line (D-58)")
 
     # --- Storage / messaging -------------------------------------------------------
     database_url: SecretStr = Field(
@@ -46,7 +50,6 @@ class Settings(BaseSettings):
     gemini_model_deep: str = "gemini-2.5-pro"
     urlscan_api_key: SecretStr | None = None
     github_token: SecretStr | None = None
-    shodan_api_key: SecretStr | None = None
     abusech_auth_key: SecretStr | None = None
     telegram_api_id: int | None = None
     telegram_api_hash: SecretStr | None = None
@@ -63,11 +66,12 @@ class Settings(BaseSettings):
     urlscan_brand_query: str = "page.domain:*{keyword}* AND date:>now-1d"
     urlscan_clickfix_query: str = 'date:>now-1h AND page.title:("verify you are human" OR "captcha" OR "robot")'
     github_api_url: str = "https://api.github.com"
-    shodan_api_url: str = "https://api.shodan.io"
     kev_feed_url: str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
     epss_api_url: str = "https://api.first.org/data/v1/epss"
     collector_interval_minutes: int = Field(default=30, ge=5, le=1440)
     kev_lookback_days: int = Field(default=7, ge=1, le=90)
+    # D-71: the daily retry of incomplete GitHub data gives up on a KEV entry after this many runs
+    kev_reenrich_max_attempts: int = Field(default=5, ge=1, le=30)
     epss_alert_threshold: float = Field(default=0.10, ge=0, le=1)
     http_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     jarm_timeout_seconds: int = Field(default=10, ge=2, le=60)
@@ -107,6 +111,15 @@ class Settings(BaseSettings):
     signature_tolerance_seconds: int = Field(default=300, ge=30, le=3600)
     webhook_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
+    # --- Phase H: tenant API rate limits (D-56) --------------------------------------------
+    api_rate_limit_per_minute: int = Field(default=60, ge=1, le=100_000, description="Per tenant, pull + feedback")
+    api_auth_failures_per_ip: int = Field(default=20, ge=1, le=100_000)
+    api_auth_failure_window_seconds: int = Field(default=600, ge=10, le=86_400)
+
+    # --- Phase H: data retention (D-57); 0 keeps that table forever ---------------------------
+    retention_raw_event_days: int = Field(default=90, ge=0, le=3650)
+    retention_ai_compilation_days: int = Field(default=180, ge=0, le=3650)
+
     # --- Phase T: Telegram digest + command bot (Bot API identity, never the Telethon CTI account) ---
     tgbot_enabled: bool = False
     tgbot_token: SecretStr | None = Field(default=None, description="BotFather token")
@@ -119,6 +132,10 @@ class Settings(BaseSettings):
     tgbot_digest_top: int = Field(default=10, ge=1, le=50)
     tgbot_send_empty_digest: bool = True
     tgbot_attach_json: bool = False
+    # Opt-in ops alerts (D-65): a job failing N runs in a row or stale; no intelligence in these messages
+    tgbot_ops_alerts: bool = False
+    tgbot_ops_alert_after_failures: int = Field(default=3, ge=1, le=100)
+    tgbot_ops_alert_cooldown_hours: int = Field(default=6, ge=1, le=168)
 
     @field_validator("tgbot_digest_times")
     @classmethod

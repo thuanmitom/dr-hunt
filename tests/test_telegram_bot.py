@@ -142,7 +142,8 @@ def test_pack_files_names_and_contents():
     files = pack_files(payload)
     assert [name for name, _, _ in files] == ["pack-p-1.json", "v3-runmru-paste.yml", "queries-p-1.txt"]
     queries = files[2][1].decode()
-    assert "# Wazuh / OpenSearch DSL" in queries and "DeviceRegistryEvents | take 1" in queries
+    assert "# Wazuh / OpenSearch DSL" in queries
+    assert "DeviceRegistryEvents" not in queries and "KQL" not in queries  # D-63: an older pack's KQL is not shown
 
 
 def test_digest_schedule_is_converted_to_utc():

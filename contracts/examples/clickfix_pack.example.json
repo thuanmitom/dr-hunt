@@ -41,12 +41,10 @@
               ]
             }
           }
-        },
-        "kql_defender": "DeviceRegistryEvents\n| where RegistryKey contains \"\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\RunMRU\" and (RegistryValueData contains \"mshta\" or RegistryValueData contains \"powershell\" or RegistryValueData contains \"pwsh\" or RegistryValueData contains \"cmd /c\" or RegistryValueData contains \"curl\") and (RegistryValueData contains \"http\" or RegistryValueData contains \" -enc\" or RegistryValueData contains \" -e \" or RegistryValueData contains \"iwr\" or RegistryValueData contains \"irm\" or RegistryValueData contains \"iex\" or RegistryValueData contains \"frombase64string\")"
+        }
       },
       "target_scope": "all_endpoints",
       "required_telemetry": [
-        "defender_xdr:deviceregistryevents",
         "sysmon:13"
       ],
       "scope_placeholders": []
@@ -70,12 +68,10 @@
               ]
             }
           }
-        },
-        "kql_defender": "DeviceProcessEvents\n| where InitiatingProcessFolderPath endswith \"\\\\explorer.exe\" and (FolderPath endswith \"\\\\mshta.exe\" or FolderPath endswith \"\\\\powershell.exe\" or FolderPath endswith \"\\\\pwsh.exe\" or FolderPath endswith \"\\\\cscript.exe\" or FolderPath endswith \"\\\\wscript.exe\") and (ProcessCommandLine contains \"http\" or ProcessCommandLine contains \" -enc\" or ProcessCommandLine contains \"iwr\" or ProcessCommandLine contains \"irm\" or ProcessCommandLine contains \"iex\" or ProcessCommandLine contains \"frombase64string\")"
+        }
       },
       "target_scope": "all_endpoints",
       "required_telemetry": [
-        "defender_xdr:deviceprocessevents",
         "sysmon:1"
       ],
       "scope_placeholders": []
