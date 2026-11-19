@@ -12,6 +12,94 @@ one machine with [`docs/INSTALL.md`](docs/INSTALL.md).
 The AI threat model is in [`docs/AI_RISK_ASSESSMENT.md`](docs/AI_RISK_ASSESSMENT.md). A full Vietnamese overview is in [`README.vi.md`](README.vi.md).
 Specification, decisions, architecture and the Telegram design: [`SPEC.md`](SPEC.md), [`DECISIONS.md`](DECISIONS.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`TELEGRAM.md`](TELEGRAM.md).
 
+## At a glance
+
+How intelligence flows. HuntCompiler only reads public sources and serves packs; it never connects into your network.
+Your side pulls the packs, runs the hunts itself and sends back two yes/no answers.
+
+```mermaid
+flowchart TB
+  SRC["Public threat intelligence on the Internet<br/>CISA KEV · EPSS · GitHub PoCs · URLScan · CertStream<br/>Telegram CTI · HIBP · LOLDrivers · LOLRMM · HijackLibs · OSV"]
+  subgraph HC["HuntCompiler, on your own machine"]
+    direction LR
+    G["Guardrails<br/>whitelist · unpacker · SSRF guard"] --> C["Clusters + score<br/>KEV: edge or endpoint"] --> T["Hunt templates<br/>+ AI drafts, off by default"] --> P["Signed Hunting Pack v2.0<br/>Sigma · Wazuh query · blocklist"]
+  end
+  K["Integration Kit consumer<br/>on your side"]
+  SIEM["Wazuh · Elastic · Splunk"]
+  TG["Telegram digest + bot<br/>for people"]
+  SRC --> HC
+  HC -->|HTTPS pull, signed| K
+  HC --> TG
+  K -->|read-only hunts| SIEM
+  K -.->|1-bit feedback| HC
+```
+
+**What people see in Telegram.** A mockup with example data, in the bot's real format: the morning digest, then
+`/pack` with the files the bot attaches.
+
+<p align="center"><img src="docs/images/telegram-mockup.svg" width="760" alt="Telegram mockup: the daily digest lists new hunting packs, edge CVEs, exploited CVEs to patch, dataset updates and health; the /pack command returns the pack summary and its JSON, Sigma and query files"></p>
+
+**What a consumer receives.** One Hunting Pack, abridged from `contracts/examples/clickfix_pack.example.json`. Each
+pack arrives with an HMAC signature.
+
+```json
+{
+  "schema_version": "2.0",
+  "pack_id": "3f1c2b7e-9a64-4c1d-8e2f-5b7a0d4c6e91",
+  "attack_vector": "clickfix_fileless",
+  "severity": "high",
+  "confidence_score": 72,
+  "mitre_attack": ["T1059.001", "T1204.004", "T1218.005"],
+  "threat_summary": "Fake CAPTCHA pages copy a PowerShell download cradle to the clipboard ...",
+  "prevention_blocklist": {
+    "ttl_days": 14,
+    "domains": ["cdn-captcha-assets.example", "verify-human-check.example"]
+  },
+  "internal_hunting_tasks": [
+    {
+      "task_id": "v3-runmru-paste",
+      "description": "RunMRU values containing a LOLBin plus a download/decode token (Sysmon 13).",
+      "target_scope": "all_endpoints",
+      "required_telemetry": ["sysmon:13"],
+      "sigma_yaml": "title: ... (the full Sigma rule)",
+      "compiled_queries": { "wazuh_es_dsl": { "query": "... (ready to run on Wazuh)" } }
+    }
+  ],
+  "soar_playbook_hints": { "auto_block_pre_iocs": false, "notify_only_on_sighting": true }
+}
+```
+
+**How a consumer uses a pack.**
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant K as Consumer (Integration Kit)
+  participant H as HuntCompiler API
+  participant S as Your SIEM
+  K->>H: GET /api/v1/packs after the last cursor (bearer token)
+  H-->>K: new packs, each with an HMAC signature
+  K->>K: verify the signature, re-validate schema and guardrails
+  K->>K: fill HC placeholders from local data (internal IPs, accounts)
+  K->>S: run each hunt query, read-only
+  S-->>K: hits, kept in a local report
+  K->>H: POST /api/v1/feedback sighting + evaluable (HMAC)
+  Note over K,H: Only two yes/no answers leave your network
+```
+
+**A real consumer run** on the official Wazuh indexer (`integration_kit/wazuh/SAMPLE_RUN.md`): 5 packs, 12 hunts, every
+expected hit found.
+
+```text
+$ python -m integration_kit.reference_consumer cycle
+pull: {'queued': 5, 'duplicate': 0, 'rejected': 0}
+pack 0d6bf841…: sighting=True evaluable=True feedback=recorded
+pack 22524d37…: sighting=True evaluable=True feedback=recorded
+pack 4322b3a5…: sighting=True evaluable=True feedback=recorded
+pack b17bef2a…: sighting=True evaluable=True feedback=recorded
+pack f89848a6…: sighting=True evaluable=True feedback=recorded
+```
+
 ## Architecture
 
 ```

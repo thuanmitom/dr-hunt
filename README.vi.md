@@ -6,6 +6,96 @@
 
 ---
 
+## Nhìn nhanh bằng hình
+
+Dòng chảy của dữ liệu. HuntCompiler chỉ đọc nguồn công khai và phát gói; nó không bao giờ kết nối vào mạng của bạn.
+Phía bạn tự kéo gói về, tự chạy truy vấn, rồi chỉ gửi lại hai câu trả lời có/không.
+
+```mermaid
+flowchart TB
+  SRC["Tình báo mối đe doạ công khai trên Internet<br/>CISA KEV · EPSS · PoC trên GitHub · URLScan · CertStream<br/>Telegram CTI · HIBP · LOLDrivers · LOLRMM · HijackLibs · OSV"]
+  subgraph HC["HuntCompiler, chạy trên máy của bạn"]
+    direction LR
+    G["Lớp bảo vệ<br/>whitelist · giải mã stager · chặn SSRF"] --> C["Gom cụm + chấm điểm<br/>KEV: thiết bị biên hay máy trạm"] --> T["Template săn tìm<br/>+ AI đề xuất, mặc định tắt"] --> P["Gói săn tìm v2.0 có chữ ký<br/>Sigma · truy vấn Wazuh · blocklist"]
+  end
+  K["Consumer của Integration Kit<br/>chạy phía bạn"]
+  SIEM["Wazuh · Elastic · Splunk"]
+  TG["Digest + bot Telegram<br/>cho con người"]
+  SRC --> HC
+  HC -->|kéo gói qua HTTPS, có chữ ký| K
+  HC --> TG
+  K -->|truy vấn chỉ đọc| SIEM
+  K -.->|phản hồi 1 bit| HC
+```
+
+**Người dùng thấy gì trên Telegram.** Mockup với dữ liệu ví dụ, đúng định dạng bot đang in ra: digest buổi sáng, rồi lệnh
+`/pack` kèm các file bot gửi.
+
+<p align="center"><img src="docs/images/telegram-mockup.svg" width="760" alt="Mockup Telegram: digest hằng ngày liệt kê gói săn tìm mới, CVE thiết bị biên, CVE cần vá, cập nhật dataset và tình trạng hệ thống; lệnh /pack trả về tóm tắt gói và các file JSON, Sigma, truy vấn"></p>
+
+**Consumer nhận được gì.** Một gói săn tìm, rút gọn từ `contracts/examples/clickfix_pack.example.json`. Mỗi gói đi kèm
+chữ ký HMAC.
+
+```json
+{
+  "schema_version": "2.0",
+  "pack_id": "3f1c2b7e-9a64-4c1d-8e2f-5b7a0d4c6e91",
+  "attack_vector": "clickfix_fileless",
+  "severity": "high",
+  "confidence_score": 72,
+  "mitre_attack": ["T1059.001", "T1204.004", "T1218.005"],
+  "threat_summary": "Fake CAPTCHA pages copy a PowerShell download cradle to the clipboard ...",
+  "prevention_blocklist": {
+    "ttl_days": 14,
+    "domains": ["cdn-captcha-assets.example", "verify-human-check.example"]
+  },
+  "internal_hunting_tasks": [
+    {
+      "task_id": "v3-runmru-paste",
+      "description": "RunMRU values containing a LOLBin plus a download/decode token (Sysmon 13).",
+      "target_scope": "all_endpoints",
+      "required_telemetry": ["sysmon:13"],
+      "sigma_yaml": "title: ... (the full Sigma rule)",
+      "compiled_queries": { "wazuh_es_dsl": { "query": "... (ready to run on Wazuh)" } }
+    }
+  ],
+  "soar_playbook_hints": { "auto_block_pre_iocs": false, "notify_only_on_sighting": true }
+}
+```
+
+**Consumer dùng gói thế nào.**
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant K as Consumer (Integration Kit)
+  participant H as API HuntCompiler
+  participant S as SIEM của bạn
+  K->>H: GET /api/v1/packs từ con trỏ lần trước (bearer token)
+  H-->>K: các gói mới, mỗi gói có chữ ký HMAC
+  K->>K: kiểm chữ ký, kiểm lại schema và rào chắn
+  K->>K: điền placeholder HC từ dữ liệu nội bộ (IP, tài khoản)
+  K->>S: chạy từng truy vấn, chỉ đọc
+  S-->>K: kết quả, chỉ lưu trong báo cáo nội bộ
+  K->>H: POST /api/v1/feedback sighting + evaluable (HMAC)
+  Note over K,H: Chỉ hai câu trả lời có/không rời khỏi mạng của bạn
+```
+
+**Một lần chạy consumer thật** trên Wazuh indexer chính hãng (`integration_kit/wazuh/SAMPLE_RUN.md`): 5 gói, 12 truy
+vấn, đều bắt đúng.
+
+```text
+$ python -m integration_kit.reference_consumer cycle
+pull: {'queued': 5, 'duplicate': 0, 'rejected': 0}
+pack 0d6bf841…: sighting=True evaluable=True feedback=recorded
+pack 22524d37…: sighting=True evaluable=True feedback=recorded
+pack 4322b3a5…: sighting=True evaluable=True feedback=recorded
+pack b17bef2a…: sighting=True evaluable=True feedback=recorded
+pack f89848a6…: sighting=True evaluable=True feedback=recorded
+```
+
+---
+
 ## 1. Dự án này làm gì
 
 OutSight HuntCompiler đứng **ngoài Internet**. Nó thu thập tín hiệu tấn công mới (domain giả mạo, CVE thiết bị

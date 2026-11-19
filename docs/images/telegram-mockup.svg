@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="1120" viewBox="0 0 860 1120" role="img" aria-labelledby="t d">
+  <title id="t">OutSight Telegram bot: digest and /pack (mockup)</title>
+  <desc id="d">Mockup with example data of the daily digest message and the /pack command answer, in the bot's real format.</desc>
+  <defs>
+    <clipPath id="frame"><rect x="0" y="0" width="860" height="1120" rx="18"/></clipPath>
+    <style>
+      text { font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 13.5px; fill: #1f2328; }
+      .b { font-weight: 700; }
+      .c { font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #0b5cad; }
+      .m { fill: #6e7781; font-size: 11.5px; }
+      .h1 { fill: #ffffff; font-size: 17px; font-weight: 700; }
+      .h2 { fill: #d6e4f0; font-size: 12.5px; }
+      .tag { fill: #ffffff; font-size: 11px; font-style: italic; }
+      .ico { fill: #ffffff; font-size: 9.5px; font-weight: 700; }
+    </style>
+  </defs>
+  <g clip-path="url(#frame)">
+    <rect width="860" height="1120" fill="#dde6ec"/>
+    <!-- header -->
+    <rect width="860" height="64" fill="#517da2"/>
+    <circle cx="40" cy="32" r="20" fill="#ffffff"/>
+    <text x="40" y="37" text-anchor="middle" style="fill:#517da2;font-weight:700;font-size:14px">OS</text>
+    <text x="72" y="29" class="h1">OutSight HuntCompiler</text>
+    <text x="72" y="49" class="h2">bot · digest every day at 08:00</text>
+    <rect x="690" y="20" width="150" height="24" rx="12" fill="#3f6788"/>
+    <text x="765" y="36" text-anchor="middle" class="tag">mockup · example data</text>
+
+    <!-- 1. daily digest -->
+    <rect x="24" y="84" width="800" height="470" rx="14" fill="#ffffff"/>
+    <text x="44" y="112" class="b">OutSight digest</text>
+    <text x="44" y="132">Period: 2026-11-16 08:00 to 2026-11-17 08:00 (Asia/Ho_Chi_Minh)</text>
+    <text x="44" y="152">Clusters: 3 (new 2, updated 1)</text>
+    <text x="44" y="172">By vector: V2 1 · V3 1 · V5 1</text>
+    <text x="44" y="192">By severity: critical 1 · high 2</text>
+
+    <text x="44" y="222" class="b">Top items</text>
+    <text x="44" y="242"><tspan class="b">[CRITICAL 85]</tspan> V2 Edge — <tspan class="c">CVE-2099-1001</tspan> · 2 tasks · 0 IOCs · <tspan class="c">#7d20a1e4</tspan> · tencongty</text>
+    <text x="44" y="262"><tspan class="b">[HIGH 72]</tspan> V3 ClickFix — <tspan class="c">cdn-captcha-assets[.]example</tspan> · 2 tasks · 2 IOCs · <tspan class="c">#3f1c2b7e</tspan> · tencongty</text>
+    <text x="44" y="282"><tspan class="b">[HIGH 65]</tspan> V5 BYOVD — <tspan class="c">LOLDrivers + HijackLibs reference</tspan> · 2 tasks · 0 IOCs · <tspan class="c">#9a41d0c2</tspan> · tencongty</text>
+
+    <text x="44" y="312" class="b">Edge CVEs</text>
+    <text x="44" y="332">• <tspan class="c">CVE-2099-1001</tspan> CVE-2099-1001 Example VPN Gateway: auth bypass · EPSS p96 · credible PoC: yes · tencongty</text>
+
+    <text x="44" y="362"><tspan class="b">Exploited CVEs to patch</tspan> (OS or desktop software: no hunting pack)</text>
+    <text x="44" y="382">• <tspan class="c">CVE-2099-1002</tspan> CVE-2099-1002 Microsoft Office: example flaw · EPSS p76 · tencongty</text>
+
+    <text x="44" y="412" class="b">Dataset updates</text>
+    <text x="44" y="432">• loldrivers: 713 records, 4 new</text>
+
+    <text x="44" y="462" class="b">Health</text>
+    <text x="44" y="482">All collectors healthy.</text>
+    <text x="44" y="502">LLM: off</text>
+    <text x="44" y="522">Push dead letters: 0</text>
+    <text x="808" y="542" text-anchor="end" class="m">08:00</text>
+
+    <!-- 2. the user asks for one pack -->
+    <rect x="626" y="574" width="210" height="42" rx="14" fill="#e3fcd0"/>
+    <text x="644" y="600" class="c" style="fill:#1f2328">/pack 3f1c2b7e</text>
+    <text x="824" y="608" text-anchor="end" class="m">08:02 ✓✓</text>
+
+    <!-- 3. the bot answers with the pack summary -->
+    <rect x="24" y="636" width="800" height="338" rx="14" fill="#ffffff"/>
+    <text x="44" y="664"><tspan class="b">Pack</tspan> <tspan class="c">3f1c2b7e-9a64-4c1d-8e2f-5b7a0d4c6e91</tspan> v1</text>
+    <text x="44" y="684">Tenant: tencongty · V3 ClickFix — <tspan class="c">cdn-captcha-assets[.]example</tspan></text>
+    <text x="44" y="704">Severity: <tspan class="b">high</tspan> · confidence 72</text>
+    <text x="44" y="724">MITRE: T1059.001, T1204.004, T1218.005</text>
+    <text x="44" y="744">Expires: 2026-12-01 08:00</text>
+    <text x="44" y="764">Blocklist (TTL 14 d): 2 domains · 0 IPs · 0 hashes · 0 JARM</text>
+    <text x="44" y="784">Hints: auto-block no · notify only on sighting yes</text>
+    <text x="44" y="804">Summary: Fake CAPTCHA pages copy a PowerShell download cradle to the clipboard and instruct the victim</text>
+    <text x="44" y="824">to paste it into Win+R. Recursive unpacking of the stager resolved two second-stage C2 domains.</text>
+    <text x="44" y="854" class="b">Tasks (2)</text>
+    <text x="44" y="874">• <tspan class="c">v3-runmru-paste</tspan> [all_endpoints; sysmon:13] RunMRU values containing a LOLBin plus a download/decode</text>
+    <text x="56" y="894">token (Sysmon 13).</text>
+    <text x="44" y="914">• <tspan class="c">v3-explorer-script-host</tspan> [all_endpoints; sysmon:1] explorer.exe spawning a script host with a download cradle</text>
+    <text x="56" y="934">(Sysmon 1).</text>
+    <text x="44" y="954">Files: pack JSON, 2 Sigma files, queries text</text>
+    <text x="808" y="966" text-anchor="end" class="m">08:02</text>
+
+    <!-- 4. the files the bot attaches -->
+    <g>
+      <rect x="24" y="988" width="398" height="46" rx="12" fill="#ffffff"/>
+      <circle cx="50" cy="1011" r="15" fill="#3d8fd6"/><text x="50" y="1015" text-anchor="middle" class="ico">JSON</text>
+      <text x="74" y="1008" class="c" style="fill:#1f2328;font-size:12px">pack-3f1c2b7e-9a64-4c1d-8e2f-5b7a0d4c6e91.json</text>
+      <text x="74" y="1025" class="m">full pack (JSON)</text>
+
+      <rect x="436" y="988" width="388" height="46" rx="12" fill="#ffffff"/>
+      <circle cx="462" cy="1011" r="15" fill="#4fae4e"/><text x="462" y="1015" text-anchor="middle" class="ico">YML</text>
+      <text x="486" y="1008" class="c" style="fill:#1f2328;font-size:12px">v3-runmru-paste.yml</text>
+      <text x="486" y="1025" class="m">Sigma rule</text>
+
+      <rect x="24" y="1042" width="398" height="46" rx="12" fill="#ffffff"/>
+      <circle cx="50" cy="1065" r="15" fill="#4fae4e"/><text x="50" y="1069" text-anchor="middle" class="ico">YML</text>
+      <text x="74" y="1062" class="c" style="fill:#1f2328;font-size:12px">v3-explorer-script-host.yml</text>
+      <text x="74" y="1079" class="m">Sigma rule</text>
+
+      <rect x="436" y="1042" width="388" height="46" rx="12" fill="#ffffff"/>
+      <circle cx="462" cy="1065" r="15" fill="#e8913a"/><text x="462" y="1069" text-anchor="middle" class="ico">TXT</text>
+      <text x="486" y="1062" class="c" style="fill:#1f2328;font-size:12px">queries-3f1c2b7e-9a64-….txt</text>
+      <text x="486" y="1079" class="m">Wazuh queries, one per task</text>
+    </g>
+    <rect x="0" y="1100" width="860" height="20" fill="#ffffff"/>
+  </g>
+  <rect x="0.5" y="0.5" width="859" height="1119" rx="18" fill="none" stroke="#c9d3db"/>
+</svg>
